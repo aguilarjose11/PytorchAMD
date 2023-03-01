@@ -455,11 +455,11 @@ class AttentionModel(nn.Module):
             # Figure out whether to replace values or entire buffer. ngl, this is for my own practice. This isn't needed
             if self.batches is not None:
                 # Replace the graph embeddings with the newly calculated, maintaining the buffer shape
-                self.graph_emb[:] = src_emb
+                self.graph_emb[:] = src_emb.detach()
             else:
                 # The number of batches encoded before is different. Replacing the entire Tensor.
                 # src_emb -> b x nodes x d_m
-                self.graph_emb = src_emb
+                self.graph_emb = src_emb.detach()
         else:
             # Re-use previous embeddings!
             # src_emb -> b x nodes x d_m
@@ -483,4 +483,4 @@ class AttentionModel(nn.Module):
         probability_dist = self.decoder(ctxt, src_emb, mask_dec, False)
         # Note that we could use graph[selection] to obtain the actual node. We would use self.graph_emb[selection] to
         # find the graph embeddings, which would be fed into the model for the next iteration.
-        return probability_dist.clamp(1e-4)
+        return probability_dist

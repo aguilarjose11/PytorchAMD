@@ -21,8 +21,9 @@ class TravelingSalesmanEnv(gym.Env):
     }
 
     def __init__(self,
-                 nodes: int,
+                 num_nodes: int,
                  max_coord: float = 1.,
+                 new_on_reset: bool = True,
                  seed: int = None,
                  render_mode = None):
         """Traveling Salesman Problem
@@ -40,9 +41,11 @@ class TravelingSalesmanEnv(gym.Env):
         """
         # Save constructor parameters
         # We add one to account for agent's initial position.
-        self.num_nodes = nodes
+        self.num_nodes = num_nodes
         # Maximum X, Y values, starting at 0
         self.max_coord = max_coord
+        # Whether to reset the graph generated at first.
+        self.new_on_reset = new_on_reset
         self.seed = seed
         # Cartesian coordinate dimensions
         self.coordinate_dimensions = 2
@@ -59,8 +62,8 @@ class TravelingSalesmanEnv(gym.Env):
         # agent: Index of node the agent currently sits on.
         # distance: Distance currently traveled
         self.observation_space = spaces.Dict({
-            "agent": spaces.Box(0, self.num_nodes, shape=(1,), dtype=int),
-            "distance": spaces.Box(0, np.inf, shape=(1,), dtype=float)
+            "agent": spaces.Box(0, self.num_nodes, dtype=int),
+            "distance": spaces.Box(0, np.inf, dtype=float)
         })
         # Possible actions are node indices
         self.action_space = spaces.Discrete(self.num_nodes)
@@ -90,9 +93,10 @@ class TravelingSalesmanEnv(gym.Env):
               ) -> Tuple[Observation, Information]:
         super().reset(seed=seed)
         # Create initial graph problem nodes
-        self.nodes = self.np_random.random((self.num_nodes, self.coordinate_dimensions))
-        # Convert to maximum dimensions
-        self.nodes *= self.max_coord
+        if self.new_on_reset or not hasattr(self, "nodes"):
+            self.nodes = self.np_random.random((self.num_nodes, self.coordinate_dimensions))
+            # Convert to maximum dimensions
+            self.nodes *= self.max_coord
         # Agent's and Goal's nodes.
         self.agent_start_idx = 0
         # Agent's current node location
@@ -102,7 +106,7 @@ class TravelingSalesmanEnv(gym.Env):
         self.visited_nodes = np.array([
             np.nan if i != self.agent_start_idx else 0 for i in range(self.num_nodes)
         ])
-        # Mask for attention mechanisms. TODO: Check if current node shall be True or False
+        # Mask for attention mechanisms.
         self.mask = np.logical_not(np.isnan(self.visited_nodes))
         # Agent's Traveled distance
         self.distance = 0.
@@ -140,11 +144,10 @@ class TravelingSalesmanEnv(gym.Env):
         # Truncation never happens as actions do not allow to go off bounds.
         truncated = False
         # Calculate Rewards. Gives high punishment for staying, but no error
-        reward = (-1) * distance if not same_node else self.max_coord
+        reward = (-1) * distance
         # Calculate observation and information
         obs = self._get_observation()
         info = self._get_info()
-
         return obs, reward, terminated, truncated, info
 
 
