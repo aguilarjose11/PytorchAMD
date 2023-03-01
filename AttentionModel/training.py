@@ -89,6 +89,8 @@ class REINFORCE(nn.Module):
                 explore: bool = False):
         """Forward pass through policy"""
         # Save probability distribution, moving them to CPU.
+        device = list(self.parameters())[0].device
+        # probability_distribution -> batch x 1 x nodes
         probability_distribution = self.policy(graph=graph,
                                                ctxt=ctxt,
                                                mask_emb_graph=mask_emb_graph,
@@ -97,14 +99,15 @@ class REINFORCE(nn.Module):
         if explore:
             # Allow exploration, sampling from probability distribution generated.
             sampler = Categorical(probability_distribution.detach().cpu())
-            # action -> 1
-            action = sampler.sample()
+            # action -> batch x 1 x 1
+            action = sampler.sample().unsqueeze(-1)
         else:
-            # action -> 1 x 1
-            action = torch.argmax(probability_distribution.detach().cpu(), dim=-1, keepdim=False)
+            # action -> batch x 1 x 1
+            action = torch.argmax(probability_distribution.detach().cpu(), dim=-1, keepdim=True)
         # Store state, probability distribution, and action taken
-        self.pi.append(probability_distribution.squeeze())
-        self.actions.append(action)
+        pi = torch.gather(probability_distribution, -1, action.to(device))
+        self.pi.append(pi)
+        self.actions.append(action.cpu())
         return action
 
     def _get_rewards(self,
@@ -155,23 +158,20 @@ class REINFORCE(nn.Module):
         G = self._get_rewards(discounted=True)
         #delta = G
         if self.running_G is None:
-            self.running_G = G.mean()
+            self.running_G = np.mean(G, axis=0)
         else:
             self.running_G = self.beta * self.running_G + (1 - self.beta) * G.mean()
         delta = (G - self.running_G)
-        delta_std = self.eps + delta.std() if len(G) > 1 else 1
+        delta_std = self.eps + delta.std(axis=0) if len(G) > 1 else 1
         delta = delta / delta_std
         device = list(self.parameters())[0].device
         delta = torch.from_numpy(delta).to(device)
 
         # Step 2: Compute log probabilities
-        # pi -> episode_len x d_action
+        # pi -> episode_len x 1
         pi = torch.stack(self.pi)
-        if pi.isnan().any():
-            import pdb; pdb.set_trace()
-        ln_pi = torch.log(pi)
-        actions = torch.stack(self.actions)
-        ln_pi_a = ln_pi[np.arange(len(actions)), actions]
+        ln_pi_a = torch.log(pi).squeeze()
+        #ln_pi_a = ln_pi[np.arange(len(actions)), actions]
 
         # Step 3: compute performance function
         # See note update.a on the use of the mean here vs Sutton & Barto's algorithm.
