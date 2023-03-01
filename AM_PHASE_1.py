@@ -17,22 +17,22 @@ import tqdm
 warnings.filterwarnings("ignore")
 
 nodes = 20
-
+objectives = 5
 total_episodes = 1_000
-
+context = 2
 device = 'cuda'
 
 torch.autograd.set_detect_anomaly(True)
 
 # Attention Model Parameters
 d_m = 128
-d_c = d_m * 2
+d_c = d_m * context
 d_k = 128
 h = 8
 N = 3
 d_ff = 128
 n_nodes = nodes
-embeder = 2
+embeder = 4
 d_v = 128
 c = 10.
 head_split = True
@@ -40,21 +40,22 @@ dropout = 0.
 use_graph_emb = True
 
 samples = 1_024
-batches = 512
+batches = 1
 epochs = 10
-epochs *= 1_250 #
+epochs *= 1_250  #
 
 assert samples % batches == 0, f"Number of samples is not divisible by specified batches: {samples} % {batches} = {samples % batches}."
 # List of environments. Use .reset({"new": False}) to reuse same environment. Useful for Training, Validation comparisons
 # We reset them here already, as we want to keep the unique graphs generated here.
+print("Here1")
 batched_envs = [
-    gym.vector.make("combinatorial_problems/TravelingSalesman-v0",
+    gym.vector.make("combinatorial_problems/Phase1Env-v0",
                     num_nodes=nodes,
                     num_envs=batches,
-                    new_on_reset=False,
-                    asynchronous=False) for batch in range(samples // batches)
+                    num_objectives=objectives,
+                    new_on_reset=False) for batch in range(samples // batches)
 ]
-
+print("Here2")
 rewards_over_epochs = []
 
 agent = AttentionModel(d_m=d_m,
@@ -80,31 +81,37 @@ am_REINFORCE = REINFORCE(policy=agent,
                          eps=1e-9).to(device)
 for epoch in range(epochs):
     rewards_over_batches = []
+    print("Here3")
     for env in tqdm.tqdm(batched_envs, file=sys.stdout):
         # Apply seeds
         state, info = env.reset()
         start_idx = info["agent_start_idx"]
+        end_idx = info["agent_end_idx"]
+        obj_idx = info["agent_obj_idx"][0]
+        non_obj_idx = info["agent_non_obj_idx"][0]
+        curr_idx = info["agent_curr_idx"][0]
+        vis_idx = info["agent_visited_idx"]
         done = False
         batch_rewards = 0
         while not done:
             # graph -> b x n_nodes x coords
             graph_nodes = np.stack(info["nodes"])
-            graph = torch.FloatTensor(graph_nodes).reshape(batches, nodes, 2).to(device)
+            graph = torch.FloatTensor(graph_nodes).reshape(batches, nodes, embeder).to(device)
             # The context will be the concatenation of the node embeddings for first and last nodes.
             # use am_REINFORCE.policy.encode
             # tmb_emb -> b x nodes x d_m
             tmp_emb = am_REINFORCE.policy.encoder(graph).detach()
             # start/end_node -> b x 1 x d_m
-            start_node = tmp_emb[np.arange(batches),start_idx,:].unsqueeze(1)
-            end_node = tmp_emb[np.arange(batches),start_idx,:].unsqueeze(1)
+            start_node = tmp_emb[np.arange(batches), start_idx, :].unsqueeze(1)
+            curr_node = tmp_emb[np.arange(batches), curr_idx, :].unsqueeze(1)
+
             # ctxt -> b x 1 x d_c (2 * d_m)
-            ctxt = torch.cat([start_node, end_node], dim=-1)
+            ctxt = torch.cat([start_node, curr_node], dim=-1)
             # For now, I will not use a mask for the embedding input.
             # mask_emb_graph -> b x 1 x nodes
             mask_emb_graph = torch.zeros(batches, 1, nodes).bool().to(device) # Empty Mask!
             # mask_dex_graph -> b x 1 x nodes
-            masks = np.stack(info["mask"])
-            mask_dec_graph = torch.tensor(masks).unsqueeze(1).to(device)
+            mask_dec_graph = torch.tensor(np.logical_not(np.ones(batches*1*nodes)).reshape(batches, 1, nodes)).to(device)
             reuse_embeding = False
 
             action = am_REINFORCE(graph=graph,

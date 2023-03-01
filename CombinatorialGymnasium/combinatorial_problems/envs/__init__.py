@@ -1,2 +1,2 @@
 from .grid_world import GridWorldEnv
-from .combinatorial import TravelingSalesmanEnv
+from .combinatorial import TravelingSalesmanEnv, Phase1Env

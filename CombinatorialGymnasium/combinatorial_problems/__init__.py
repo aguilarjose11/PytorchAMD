@@ -11,3 +11,9 @@ register(
     entry_point="combinatorial_problems.envs:TravelingSalesmanEnv",
     max_episode_steps=300,
 )
+
+register(
+    id="combinatorial_problems/Phase1Env-v0",
+    entry_point="combinatorial_problems.envs:Phase1Env",
+    max_episode_steps=300,
+)
