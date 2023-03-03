@@ -43,6 +43,7 @@ samples = 1_024
 batches = 512
 epochs = 10
 epochs *= 1_250 #
+asynchronous = False
 
 assert samples % batches == 0, f"Number of samples is not divisible by specified batches: {samples} % {batches} = {samples % batches}."
 # List of environments. Use .reset({"new": False}) to reuse same environment. Useful for Training, Validation comparisons
