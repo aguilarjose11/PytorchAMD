@@ -287,7 +287,7 @@ class Phase1Env(gym.Env):
         # May need to add an assert or something to keep agent from selecting same node.
         # Compute the distance traveled by going to the new node.
         prev_node = self.nodes[self.trajectory[-1]]
-        new_node = self.nodes[action][0][0]
+        new_node = self.nodes[action]
         distance = np.linalg.norm(prev_node[0:2] - new_node[0:2])
         # Compute distance and mark node as visited.
         self.distance += distance
