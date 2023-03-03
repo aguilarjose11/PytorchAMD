@@ -282,6 +282,8 @@ class Phase1Env(gym.Env):
              action: int,
              ) -> Tuple[Observation, float, bool, bool, Information]:
         assert action < self.num_nodes, f"Invalid node {action} given! Should have been < {self.num_nodes}."
+        # Avoid extra dimensions that mess with Gymnasium.
+        action = action.squeeze()
         # May need to add an assert or something to keep agent from selecting same node.
         # Compute the distance traveled by going to the new node.
         prev_node = self.nodes[self.trajectory[-1]]
