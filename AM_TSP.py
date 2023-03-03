@@ -43,6 +43,7 @@ samples = 1_024
 batches = 512
 epochs = 10
 epochs *= 1_250 #
+asynchronous = False
 
 assert samples % batches == 0, f"Number of samples is not divisible by specified batches: {samples} % {batches} = {samples % batches}."
 # List of environments. Use .reset({"new": False}) to reuse same environment. Useful for Training, Validation comparisons
@@ -51,7 +52,8 @@ batched_envs = [
     gym.vector.make("combinatorial_problems/TravelingSalesman-v0",
                     num_nodes=nodes,
                     num_envs=batches,
-                    new_on_reset=False) for batch in range(samples // batches)
+                    new_on_reset=False,
+                    asynchronous=asynchronous) for batch in range(samples // batches)
 ]
 
 rewards_over_epochs = []
