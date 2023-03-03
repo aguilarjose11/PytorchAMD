@@ -136,7 +136,7 @@ class TravelingSalesmanEnv(gym.Env):
         self.distance += distance
         self.visited_nodes[action] = self.distance
         self.trajectory.append(action)
-        self.agent_curr_idx = action
+        self.agent_curr_idx = action.squeeze()
         # Compute mask
         self.mask = np.logical_not(np.isnan(self.visited_nodes))
         # Check if agent visited all nodes: if we masked all nodes, then, we visited all nodes!
