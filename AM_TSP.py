@@ -37,7 +37,7 @@ d_v = 128
 c = 10.
 head_split = True
 dropout = 0.
-use_graph_emb = True
+use_graph_emb = "p"
 
 samples = 1_024
 batches = 512
@@ -107,13 +107,13 @@ for epoch in range(epochs):
             masks = np.stack(info["mask"])
             mask_dec_graph = torch.tensor(masks).unsqueeze(1).to(device)
             reuse_embeding = False
-
-            action = am_REINFORCE(graph=graph,
-                                  ctxt=ctxt,
-                                  mask_emb_graph=mask_emb_graph,
-                                  mask_dec_graph=mask_dec_graph,
-                                  reuse_embeding=reuse_embeding,
-                                  explore=True).numpy()
+            with torch.cuda.amp.autocast():
+                action = am_REINFORCE(graph=graph,
+                                      ctxt=ctxt,
+                                      mask_emb_graph=mask_emb_graph,
+                                      mask_dec_graph=mask_dec_graph,
+                                      reuse_embeding=reuse_embeding,
+                                      explore=True).numpy()
             state, reward, terminated, truncated, info = env.step(action)
             am_REINFORCE.rewards.append(reward)
             batch_rewards += reward

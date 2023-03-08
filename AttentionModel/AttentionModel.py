@@ -15,8 +15,9 @@ from typing import Callable, Union, Tuple
 import torch
 from torch import Tensor
 import torch.nn as nn
+from torch.amp import autocast
 
-from .layers import MultiHeadAttention, PDAttention
+from .layers import MultiHeadAttention, PDAttention, PersistenceEmbedding
 
 
 ''' Encoder Layers '''
@@ -265,6 +266,8 @@ class DecoderLayer(nn.Module):
                                           optim='emb',
                                           head_split=head_split,
                                           dropout=dropout)
+        ### ! Experimental changes ! ###
+
         # Attention layer for the creation of a probability distribution.
         self.pda = PDAttention(d_m=d_m,
                                d_c=d_c,
@@ -328,7 +331,7 @@ class AttentionModel(nn.Module):
                  c: float = 10.,
                  head_split: bool = False,
                  dropout: float = 0.1,
-                 use_graph_emb: bool = True,
+                 use_graph_emb: str = None,
                  batches: int=None):
         """
         
@@ -359,9 +362,9 @@ class AttentionModel(nn.Module):
             Whether to split d_v/k among heads to improve computation cost at the expense of lowered latent space.
         dropout: float
             Regularization value.
-        use_graph_emb: bool
+        use_graph_emb: str
             Flag for indicating whether to calculate the graph embedding (avg from original paper), thus adding d_m to
-            d_c.
+            d_c. either 'avg' or 'p' for persistence.
         batches: int
             Number of batches to expect.
 
@@ -370,7 +373,7 @@ class AttentionModel(nn.Module):
 
         self.d_m = d_m
         # Increment the dimension by d_m, as applying the graph embedding to the context increases its size by d_m.
-        self.d_c = d_c + d_m if use_graph_emb else 0
+        self.d_c = d_c + d_m if use_graph_emb is not None else 0
         self.d_k = d_k
         self.h = h
         self.N = N
@@ -408,9 +411,15 @@ class AttentionModel(nn.Module):
                                     d_v=d_v,
                                     head_split=head_split,
                                     dropout=dropout)
+        if self.use_graph_emb == 'p':
+            # Will use persistence layer
+            self.PersLay = PersistenceEmbedding(d_m=self.d_m,
+                                                d_ff=1_024,
+                                                persistence_dimension=2,
+                                                options={"resolution": 100, "num_landscapes": 5},
+                                                max_edge_length=10.)
 
-    
-    def forward(self, 
+    def forward(self,
                 graph: Tensor,
                 ctxt: Tensor,
                 mask_emb_graph: Tensor,
@@ -471,12 +480,22 @@ class AttentionModel(nn.Module):
         # Replace all True values for negative infinity.
         mask_dec[mask_dec_graph] = -torch.inf
         mask_dec = mask_dec.to(device)
-        if self.use_graph_emb:
+        if self.use_graph_emb == "avg":
             # If we are to use avg graph embeddings, then, calculate them and add them to ctxt
             # graph_emb_avg -> b x 1 x d_m
             graph_emb_avg = self.graph_emb.detach().mean(-2).unsqueeze(1)
             # graph_emb_avg -> b x 1 x d_v (+ d_m)
             ctxt = torch.cat((ctxt, graph_emb_avg), dim=-1)
+            assert ctxt.shape[-1] == self.d_c, f"The context shape and d_c do not match! ctxt: {ctxt.shape[-1]} vs d_c: {self.d_c}."
+        elif self.use_graph_emb == "p":
+            # If we are to use avg graph embeddings, then, calculate them and add them to ctxt
+            # graph_emb_avg -> b x 1 x d_m
+            graph_emb_p = self.PersLay(self.graph_emb.detach()).unsqueeze(1)
+            if graph_emb_p.isnan().any():
+                print("Nan detected from PersLay!")
+                #import pdb; pdb.set_trace()
+            # graph_emb_avg -> b x 1 x d_v (+ d_m)
+            ctxt = torch.cat((ctxt, graph_emb_p), dim=-1)
             assert ctxt.shape[-1] == self.d_c, f"The context shape and d_c do not match! ctxt: {ctxt.shape[-1]} vs d_c: {self.d_c}."
         # probability_dist -> b x 1 x nodes
         # selection -> b x 1
