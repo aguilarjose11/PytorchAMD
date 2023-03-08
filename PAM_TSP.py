@@ -10,7 +10,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from AttentionModel import REINFORCE, AttentionModel
+from AttentionModel import REINFORCE, PersistentAttentionModel
 
 import tqdm
 
@@ -37,12 +37,12 @@ d_v = 128
 c = 10.
 head_split = True
 dropout = 0.
-use_graph_emb = True
+use_graph_emb = "p"
 
 samples = 1_024
 batches = 512
 epochs = 10
-#epochs *= 1_250 #
+epochs *= 1_250 #
 asynchronous = False
 
 assert samples % batches == 0, f"Number of samples is not divisible by specified batches: {samples} % {batches} = {samples % batches}."
@@ -58,7 +58,7 @@ batched_envs = [
 
 rewards_over_epochs = []
 
-agent = AttentionModel(d_m=d_m,
+agent = PersistentAttentionModel(d_m=d_m,
                        d_c=d_c,
                        d_k=d_k,
                        h=h,
@@ -135,18 +135,6 @@ plt.xlabel("Epochs")
 plt.ylabel("Rewards")
 plt.xticks(range(epochs))
 plt.show()
-
-# Saving model.
-import pickle
-
-# Save results to file
-with open("AM_history.pkl", "wb") as jar:
-    pickle.dump(pd.DataFrame(rewards_to_plot, columns=["Train"]), jar)
-
-# Save model
-torch.save(am_REINFORCE, "AttentionModel.pt")
-# Re-Load model
-# model = torch.load("AttentionModel.pt")
 
 for env in batched_envs:
     env.close()

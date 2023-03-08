@@ -6,7 +6,7 @@ Modules/Layers for the Dynamic Attention Model (AM-D)
 @author: Jose E. Aguilar Escamilla
 @email: jose.efraim.a.e@gmail.com
 """
-
+import numpy as np
 # Python Libraries
 
 # External Libraries
@@ -422,6 +422,8 @@ class PersistenceEmbedding(nn.Module):
         cmpx.compute_persistence()
         # Dg -> persistence features x 2 | Note: persistence features depends on input.
         Dg = cmpx.persistence_intervals_in_dimension(self.persistence_dimension - 1)
+        # Clip infinity values to the maximum edge length
+        Dg[Dg == np.inf] = self.max_edge_length
         # Dg_vect -> 1 x d_vect
         Dg_vect = self.vectorization.fit_transform([Dg])
         # Return -> d_vect
