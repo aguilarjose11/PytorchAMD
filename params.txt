@@ -10,9 +10,10 @@
 --d_ff 512
 --c 10.
 --dropout 0.
---graph_emb p
+--graph_emb avg
 --lr 0.0001
---environments 1024
+--environments 153600
+--sub_environments 512
 --batch_size 512
 --new_environments
 --epochs 2

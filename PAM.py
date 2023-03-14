@@ -37,6 +37,7 @@ def create_parser():
     # Experiment and Environment specifics
     parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate.')
     parser.add_argument('--environments', type=int, default=512, help='Total size of data per epoch.')
+    parser.add_argument('--sub_environments', type=int, default=512, help='Number of actual environments to be generated for training. The algorithm will use environments // sub_samples iterations for a single epoch.')
     parser.add_argument('--batch_size', type=int, default=128, help='Number of sample environments per epoch. Must divide --samples without remainder.')
     parser.add_argument('--new_environments', action='store_true', default=False, help='Flag indicating whether environments should be rennewed after every epoch.')
     parser.add_argument('--epochs', type=int, default=100, help='Number of epochs to run experiments.')
@@ -67,7 +68,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # Apply assertions
-    assert args.environments % args.batch_size == 0, f"Selected number of environments ({args.environments}) is not divisible by batch size ({args.batch_size})."
+    assert args.sub_environments % args.batch_size == 0, f"Selected number of sub environments ({args.sub_environments}) is not divisible by batch size ({args.batch_size})."
+    assert args.environments % args.sub_environments == 0, f"Selected number of environments ({args.environments}) is not divisible by sub environments ({args.sub_environments})."
+    assert args.sub_environments >= args.batch_size, f"Specified batch size {args.batch_size} is larger than the number of sub environments {args.sub_environments}!"
     assert args.problem.lower() in ['tsp'], f"Problem {args.problem} not in list of implemented problems."
     # Get batched environments
     # Select environment
@@ -77,17 +80,19 @@ if __name__ == '__main__':
         d_c = args.d_m * 2
 
     # Create file names for experiments
-    experiment_params = f"heads_{args.h}_layers_{args.N}_g-embedding_{args.graph_emb}_lr_{args.lr}_epochs_{args.epochs}_batch-len_{args.batch_size}_problem_{args.problem}_nodes_{args.graph_size}_dim_{args.problem_dimension}"
+    experiment_params = f"heads_{args.h}_layers_{args.N}_g-embedding_{args.graph_emb}_lr_{args.lr}_envs_{args.environments}_epochs_{args.epochs}_batch-len_{args.batch_size}_problem_{args.problem}_nodes_{args.graph_size}_dim_{args.problem_dimension}"
     exp_file = os.path.join(args.dir, f"experiment_{args.exp_label}_{args.file}_{experiment_params}")
 
-    # Create batched environments
+    # Create batched environments. There will be sub_environments // batch_size batches
+    total_batches = args.sub_environments // args.batch_size # Batches per sub_sample
     batched_envs = [
         gym.vector.make(problem_env,
                         num_nodes=args.graph_size,
                         num_envs=args.batch_size,
                         new_on_reset=args.new_environments,
-                        asynchronous=args.asynchronous) for batch in range(args.environments // args.batch_size)
+                        asynchronous=args.asynchronous) for batch in range(total_batches)
     ]
+    # Note that actual batches per epoch would be environments // batch_size = (envoronments // sub_environments) * (total_batches)
 
     # Create training algorithm with attention model
     # Make Agent
@@ -117,54 +122,67 @@ if __name__ == '__main__':
                              eps=1e-9).to(args.device)
 
     # Training
+    sub_epochs = args.environments // args.sub_environments
     start_time = timeit.default_timer()
     rewards_over_epochs = []
     for epoch in range(args.epochs):
         rewards_over_batches = []
-        # Reset environment and prepare data loging
-        for env in tqdm.tqdm(batched_envs, file=sys.stdout):
-            # Do preparation of environments
-            state, info = env.reset()
-            start_idx = info["agent_start_idx"] # Specific to enviornment
-            done = False
-            batch_rewards = 0
-            # Run through environment
-            while not done:
-                # graph -> b x n_nodes x coords
-                graph_nodes = np.stack(info["nodes"])
-                graph = torch.FloatTensor(graph_nodes).reshape(args.batch_size, args.graph_size, 2).to(args.device)
-                # The context will be the concatenation of the node embeddings for first and last nodes.
-                # use am_REINFORCE.policy.encode
-                # tmb_emb -> b x nodes x d_m
-                tmp_emb = am_REINFORCE.policy.encoder(graph).detach()
-                # start/end_node -> b x 1 x d_m
-                start_node = tmp_emb[np.arange(args.batch_size), start_idx, :].unsqueeze(1)
-                end_node = tmp_emb[np.arange(args.batch_size), start_idx, :].unsqueeze(1)
-                # ctxt -> b x 1 x d_c (2 * d_m)
-                ctxt = torch.cat([start_node, end_node], dim=-1)
-                # For now, I will not use a mask for the embedding input.
-                # mask_emb_graph -> b x 1 x nodes
-                mask_emb_graph = torch.zeros(args.batch_size, 1, args.graph_size).bool().to(args.device)  # Empty Mask!
-                # mask_dex_graph -> b x 1 x nodes
-                masks = np.stack(info["mask"])
-                mask_dec_graph = torch.tensor(masks).unsqueeze(1).to(args.device)
-                reuse_embeding = False
-                with torch.cuda.amp.autocast():
-                    action = am_REINFORCE(graph=graph,
-                                          ctxt=ctxt,
-                                          mask_emb_graph=mask_emb_graph,
-                                          mask_dec_graph=mask_dec_graph,
-                                          reuse_embeding=reuse_embeding,
-                                          explore=True).numpy()
-                state, reward, terminated, truncated, info = env.step(action)
-                am_REINFORCE.rewards.append(reward)
-                batch_rewards += reward
-                done = terminated.all() or truncated.all()
-            # Maybe validate?
-            rewards_over_batches.append(np.array(batch_rewards).mean())
-            am_REINFORCE.update()
-            # Save scores (including validation if done)
-
+        ''' In the original paper, the authors use 1,250,000 samples per epoch. Due to computational and memory limitations
+        we need to be a bit more creative over this. To accomplish this, we use a sub_sample which would be an actual
+        number of environments created. Then, during every sub_epoch, an unique seed is given to each environment. 
+        this unique seed is incremented every sub_epoch by the number of sub_samples used. The loop runs as many times as
+        needed to train the model on the specified samples. Every epoch, the unique seeds get repeated; thus, giving the
+        sense of a whole dataset generated at once.'''
+        seeds = np.arange(args.sub_environments)
+        tqdm_sub_epochs = tqdm.tqdm(range(sub_epochs), file=sys.stdout)
+        for sub_epoch in tqdm_sub_epochs:
+            # Reset environment and prepare data loging
+            for batch_i, env in enumerate(batched_envs):
+                # Do preparation of environments
+                seed = seeds[(batch_i * args.batch_size):((batch_i + 1) * args.batch_size)]
+                state, info = env.reset(seed=seed.tolist())
+                start_idx = info["agent_start_idx"] # Specific to enviornment
+                done = False
+                batch_rewards = 0
+                # Run through environment
+                while not done:
+                    # graph -> b x n_nodes x coords
+                    graph_nodes = np.stack(info["nodes"])
+                    graph = torch.FloatTensor(graph_nodes).reshape(args.batch_size, args.graph_size, 2).to(args.device)
+                    # The context will be the concatenation of the node embeddings for first and last nodes.
+                    # use am_REINFORCE.policy.encode
+                    # tmb_emb -> b x nodes x d_m
+                    tmp_emb = am_REINFORCE.policy.encoder(graph).detach()
+                    # start/end_node -> b x 1 x d_m
+                    start_node = tmp_emb[np.arange(args.batch_size), start_idx, :].unsqueeze(1)
+                    end_node = tmp_emb[np.arange(args.batch_size), start_idx, :].unsqueeze(1)
+                    # ctxt -> b x 1 x d_c (2 * d_m)
+                    ctxt = torch.cat([start_node, end_node], dim=-1)
+                    # For now, I will not use a mask for the embedding input.
+                    # mask_emb_graph -> b x 1 x nodes
+                    mask_emb_graph = torch.zeros(args.batch_size, 1, args.graph_size).bool().to(args.device)  # Empty Mask!
+                    # mask_dex_graph -> b x 1 x nodes
+                    masks = np.stack(info["mask"])
+                    mask_dec_graph = torch.tensor(masks).unsqueeze(1).to(args.device)
+                    reuse_embeding = False
+                    with torch.cuda.amp.autocast():
+                        action = am_REINFORCE(graph=graph,
+                                              ctxt=ctxt,
+                                              mask_emb_graph=mask_emb_graph,
+                                              mask_dec_graph=mask_dec_graph,
+                                              reuse_embeding=reuse_embeding,
+                                              explore=True).numpy()
+                    state, reward, terminated, truncated, info = env.step(action)
+                    am_REINFORCE.rewards.append(reward)
+                    batch_rewards += reward
+                    done = terminated.all() or truncated.all()
+                # Maybe validate?
+                rewards_over_batches.append(np.array(batch_rewards).mean())
+                am_REINFORCE.update()
+                # Save scores (including validation if done)
+                tqdm_sub_epochs.set_description(f'Batch Score: {rewards_over_batches[-1]:2.5}')
+            # Increment seeds to create pseudo-offline training.
+            seeds += args.sub_environments
         # Verbosity
         rewards_over_epochs.append(np.mean(np.array(rewards_over_batches)))
         if args.verbose and epoch % 1 == 0:
