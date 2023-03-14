@@ -33,6 +33,7 @@ def create_parser():
     parser.add_argument('--c', type=float, default=10., help='Clipping value for attention mechanisms.')
     parser.add_argument('--dropout', type=float, default=0.1, help='Dropout probability.')
     parser.add_argument('--graph_emb', type=str, default='avg', help='Technique used in computing graph embedding for decoder.')
+    parser.add_argument('--recompute_emb', action='store_true', default=False, help='Flag indicating whether graph embeddings must be re-computed every time.')
 
     # Experiment and Environment specifics
     parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate.')
@@ -110,7 +111,8 @@ if __name__ == '__main__':
                                      head_split=args.head_split,
                                      dropout=args.dropout,
                                      use_graph_emb=args.graph_emb,
-                                     batches=args.batch_size).to(args.device)
+                                     batches=args.batch_size,
+                                     reuse_graph_emb=not args.recompute_emb).to(args.device)
 
     # Make REINFORCE
     am_REINFORCE = REINFORCE(policy=agent,
@@ -172,7 +174,8 @@ if __name__ == '__main__':
                                               mask_emb_graph=mask_emb_graph,
                                               mask_dec_graph=mask_dec_graph,
                                               reuse_embeding=reuse_embeding,
-                                              explore=True).numpy()
+                                              explore=True,
+                                              re_compute_embedding=False).numpy()
                     state, reward, terminated, truncated, info = env.step(action)
                     am_REINFORCE.rewards.append(reward)
                     batch_rewards += reward
@@ -180,6 +183,8 @@ if __name__ == '__main__':
                 # Maybe validate?
                 rewards_over_batches.append(np.array(batch_rewards).mean())
                 am_REINFORCE.update()
+                # Reset saved graph embeddings
+                am_REINFORCE.policy.graph_emb_vect = None
                 # Save scores (including validation if done)
                 if args.verbose:
                     tqdm_sub_epochs.set_description(f'Batch Score: {rewards_over_batches[-1]:2.5}')

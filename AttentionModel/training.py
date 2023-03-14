@@ -86,7 +86,8 @@ class REINFORCE(nn.Module):
                 mask_emb_graph: Tensor,
                 mask_dec_graph: Tensor,
                 reuse_embeding: bool = False,
-                explore: bool = False):
+                explore: bool = False,
+                **args):
         """Forward pass through policy"""
         # Save probability distribution, moving them to CPU.
         device = list(self.parameters())[0].device
@@ -95,7 +96,8 @@ class REINFORCE(nn.Module):
                                                ctxt=ctxt,
                                                mask_emb_graph=mask_emb_graph,
                                                mask_dec_graph=mask_dec_graph,
-                                               reuse_embeding=reuse_embeding)
+                                               reuse_embeding=reuse_embeding,
+                                               **args)
         if explore:
             # Allow exploration, sampling from probability distribution generated.
             sampler = Categorical(probability_distribution.detach().cpu())
