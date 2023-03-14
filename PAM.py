@@ -134,7 +134,8 @@ if __name__ == '__main__':
         needed to train the model on the specified samples. Every epoch, the unique seeds get repeated; thus, giving the
         sense of a whole dataset generated at once.'''
         seeds = np.arange(args.sub_environments)
-        tqdm_sub_epochs = tqdm.tqdm(range(sub_epochs), file=sys.stdout)
+        tqdm_sub_epochs = tqdm.tqdm(range(sub_epochs), file=sys.stdout, disable=not args.verbose)
+
         for sub_epoch in tqdm_sub_epochs:
             # Reset environment and prepare data loging
             for batch_i, env in enumerate(batched_envs):
@@ -180,7 +181,8 @@ if __name__ == '__main__':
                 rewards_over_batches.append(np.array(batch_rewards).mean())
                 am_REINFORCE.update()
                 # Save scores (including validation if done)
-                tqdm_sub_epochs.set_description(f'Batch Score: {rewards_over_batches[-1]:2.5}')
+                if args.verbose:
+                    tqdm_sub_epochs.set_description(f'Batch Score: {rewards_over_batches[-1]:2.5}')
             # Increment seeds to create pseudo-offline training.
             seeds += args.sub_environments
         # Verbosity
