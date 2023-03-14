@@ -142,8 +142,8 @@ if __name__ == '__main__':
             # Reset environment and prepare data loging
             for batch_i, env in enumerate(batched_envs):
                 # Do preparation of environments
-                seed = seeds[(batch_i * args.batch_size):((batch_i + 1) * args.batch_size)]
-                state, info = env.reset(seed=seed.tolist())
+                seed = seeds[(batch_i * args.batch_size):((batch_i + 1) * args.batch_size)].tolist() if not args.new_environments else None
+                state, info = env.reset(seed=seed)
                 start_idx = info["agent_start_idx"] # Specific to enviornment
                 done = False
                 batch_rewards = 0
