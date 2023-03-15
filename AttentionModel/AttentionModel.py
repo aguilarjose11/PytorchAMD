@@ -140,7 +140,7 @@ class PersistentTransformerEncoder(nn.Module):
         d_ff: int
             Feed forward neural network hidden layer dimensions
         n_nodes: int
-            Number of nodes to solve for.
+            Number of nodes to solve for. Not used.
         embeder: Callable[[Tensor], Tensor] | int
             A callable function or int that embeds a given input. The original paper for Attention Model simply uses a
             linear transformation for this based on the dimensions and information of the nodes. If embeder is an int,

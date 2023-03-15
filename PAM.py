@@ -54,9 +54,28 @@ def create_parser():
     parser.add_argument('--dir', type=str, default=".", help='Directory to where to save.')
     parser.add_argument('--exp_label', type=str, default="", help='Experiment number.')
 
-
     # Verbosity information
     parser.add_argument('--verbose', '-v', action='count', default=0, help="Verbosity level")
+
+    # Loading model for further training. Both the pt and pkl files must be available!
+    parser.add_argument('--continue_training', action='store_true', default=False, help='Flag indicating whether passed file and directory will be used for loading a model to continue training. Both *.pt and *.pkl files must be available!')
+    """Retraining
+    When using the script for continual training, it is important to note that not all of the parameters
+    created for this script will be used. This note serves as a location to know what the required params
+    are for continual training:
+    --lr
+    --environments
+    --sub_environments
+    --batch_size
+    --new_environments
+    --epochs
+    --asynchronous
+    --device
+    --graph_size
+    # Must be the same used for training
+    --problem
+    --problem_dimension
+    """
 
     return parser
 
@@ -72,6 +91,25 @@ if __name__ == '__main__':
     assert args.sub_environments % args.batch_size == 0, f"Selected number of sub environments ({args.sub_environments}) is not divisible by batch size ({args.batch_size})."
     assert args.environments % args.sub_environments == 0, f"Selected number of environments ({args.environments}) is not divisible by sub environments ({args.sub_environments})."
     assert args.sub_environments >= args.batch_size, f"Specified batch size {args.batch_size} is larger than the number of sub environments {args.sub_environments}!"
+
+    if args.continue_training:
+        # Load pkl file's args as args_old
+        # set all of relevant model information to current args
+        """Relevant parameters to copy:
+        --d_m
+        --d_k
+        --d_v
+        --h
+        --N
+        --d_ff
+        --c
+        --dropout
+        --graph_emb
+        --recompute_emb
+        --head_split
+        """
+        pass
+
     assert args.problem.lower() in ['tsp'], f"Problem {args.problem} not in list of implemented problems."
     # Get batched environments
     # Select environment
@@ -104,14 +142,14 @@ if __name__ == '__main__':
                                      h=args.h,
                                      N=args.N,
                                      d_ff=args.d_ff,
-                                     n_nodes=args.graph_size,
+                                     n_nodes=args.graph_size, # Not used
                                      embeder=args.problem_dimension,
                                      d_v=d_v,
                                      c=args.c,
                                      head_split=args.head_split,
                                      dropout=args.dropout,
                                      use_graph_emb=args.graph_emb,
-                                     batches=args.batch_size,
+                                     batches=None,
                                      reuse_graph_emb=not args.recompute_emb).to(args.device)
 
     # Make REINFORCE
@@ -122,6 +160,9 @@ if __name__ == '__main__':
                              beta=0.9,
                              gradient_clip=(1., torch.inf),
                              eps=1e-9).to(args.device)
+    if args.continue_training:
+        pass
+        #am_REINFORCE.load_state_dict(torch.load(PATH))
 
     # Training
     sub_epochs = args.environments // args.sub_environments
@@ -145,6 +186,8 @@ if __name__ == '__main__':
                 seed = seeds[(batch_i * args.batch_size):((batch_i + 1) * args.batch_size)].tolist() if not args.new_environments else None
                 state, info = env.reset(seed=seed)
                 start_idx = info["agent_start_idx"] # Specific to enviornment
+                # Initially, the start and end_idx are the same. Later, it becomes the latest-chosen node/action
+                end_idx = start_idx
                 done = False
                 batch_rewards = 0
                 # Run through environment
@@ -158,7 +201,7 @@ if __name__ == '__main__':
                     tmp_emb = am_REINFORCE.policy.encoder(graph).detach()
                     # start/end_node -> b x 1 x d_m
                     start_node = tmp_emb[np.arange(args.batch_size), start_idx, :].unsqueeze(1)
-                    end_node = tmp_emb[np.arange(args.batch_size), start_idx, :].unsqueeze(1)
+                    end_node = tmp_emb[np.arange(args.batch_size), end_idx, :].unsqueeze(1)
                     # ctxt -> b x 1 x d_c (2 * d_m)
                     ctxt = torch.cat([start_node, end_node], dim=-1)
                     # For now, I will not use a mask for the embedding input.
@@ -177,6 +220,8 @@ if __name__ == '__main__':
                                               explore=True,
                                               re_compute_embedding=False).numpy()
                     state, reward, terminated, truncated, info = env.step(action)
+                    end_idx = action.squeeze()
+                    #import pdb; pdb.set_trace()
                     am_REINFORCE.rewards.append(reward)
                     batch_rewards += reward
                     done = terminated.all() or truncated.all()
