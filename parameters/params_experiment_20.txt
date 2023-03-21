@@ -1,7 +1,6 @@
-
 --file PAM
 --dir .
---exp_label 0
+--exp_label test
 --d_m 128
 --d_k 64
 --d_v 64
@@ -10,13 +9,11 @@
 --d_ff 512
 --c 10.
 --dropout 0.1
---graph_emb p
 --lr 0.0001
---environments 153600
+--environments 128000
 --sub_environments 512
 --batch_size 512
---new_environments
---epochs 30
+--epochs 10
 --problem TSP
 --problem_dimension 2
 --device cuda
@@ -24,5 +21,4 @@
 --head_split
 --file PAM
 --dir .
---exp_label 0
 --verbose

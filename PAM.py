@@ -149,7 +149,7 @@ if __name__ == '__main__':
                                      head_split=args.head_split,
                                      dropout=args.dropout,
                                      use_graph_emb=args.graph_emb,
-                                     batches=None,
+                                     batches=args.batch_size,
                                      reuse_graph_emb=not args.recompute_emb).to(args.device)
 
     # Make REINFORCE
@@ -158,7 +158,7 @@ if __name__ == '__main__':
                              lr=args.lr,
                              gamma=0.99,
                              beta=0.9,
-                             gradient_clip=(1., torch.inf),
+                             gradient_clip=None, #(1., torch.inf),
                              eps=1e-9).to(args.device)
     if args.continue_training:
         pass
@@ -192,21 +192,25 @@ if __name__ == '__main__':
                 batch_rewards = 0
                 # Run through environment
                 while not done:
-                    # graph -> b x n_nodes x coords
+
                     graph_nodes = np.stack(info["nodes"])
+                    # Convert to tensor and reshape nodes for obtaining their encoding.
+                    # graph -> b x n_nodes x coords
                     graph = torch.FloatTensor(graph_nodes).reshape(args.batch_size, args.graph_size, 2).to(args.device)
                     # The context will be the concatenation of the node embeddings for first and last nodes.
                     # use am_REINFORCE.policy.encode
                     # tmb_emb -> b x nodes x d_m
                     tmp_emb = am_REINFORCE.policy.encoder(graph).detach()
-                    # start/end_node -> b x 1 x d_m
+                    # start or end_node -> b x 1 x d_m
                     start_node = tmp_emb[np.arange(args.batch_size), start_idx, :].unsqueeze(1)
                     end_node = tmp_emb[np.arange(args.batch_size), end_idx, :].unsqueeze(1)
+                    # The rest of the context is added within the AM algorithm
                     # ctxt -> b x 1 x d_c (2 * d_m)
                     ctxt = torch.cat([start_node, end_node], dim=-1)
                     # For now, I will not use a mask for the embedding input.
                     # mask_emb_graph -> b x 1 x nodes
                     mask_emb_graph = torch.zeros(args.batch_size, 1, args.graph_size).bool().to(args.device)  # Empty Mask!
+                    # As nodes are visited, the mask is updated to avoid considering these nodes.
                     # mask_dex_graph -> b x 1 x nodes
                     masks = np.stack(info["mask"])
                     mask_dec_graph = torch.tensor(masks).unsqueeze(1).to(args.device)
@@ -239,7 +243,7 @@ if __name__ == '__main__':
         rewards_over_epochs.append(np.mean(np.array(rewards_over_batches)))
         if args.verbose and epoch % 1 == 0:
             avg_reward = np.mean(rewards_over_epochs[-1:])
-            print(f"Epoch: {epoch} with Average Reward {avg_reward} for last epoch", )
+            print(f"Epoch: {epoch} with Average Reward {avg_reward} - std: {np.std(rewards_over_epochs[-1:])} for last epoch", )
     end_time = timeit.default_timer()
     # Save collected data
     rewards_to_plot = [[batch_r] for batch_r in rewards_over_epochs]
