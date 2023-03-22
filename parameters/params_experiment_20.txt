@@ -7,6 +7,8 @@
 --h 8
 --N 3
 --d_ff 512
+--max_edge_length 0.8
+--persistence_dimension 4
 --c 10.
 --dropout 0.1
 --lr 0.0001

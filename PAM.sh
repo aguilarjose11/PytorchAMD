@@ -17,6 +17,6 @@ date
 
 conda activate torch-gpu
 # Load parameters for experiment.
-mapfile -t < parameters/params_experiment_20.txt
+mapfile -t < parameters/params_experiment_50.txt
 
 CUDA_VISIBLE_DEVICES=0 python PAM.py ${MAPFILE[@]} --graph_emb p --exp_label 'persist_test'

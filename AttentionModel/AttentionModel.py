@@ -328,7 +328,8 @@ class PersistentAttentionModel(nn.Module):
                  n_nodes: int,
                  embeder: Union[nn.Module, int],
                  d_v: int = None,
-                 max_edge_length: int = 10.,
+                 max_edge_length: float = 0.1,
+                 persistence_dimension: int = 2,
                  c: float = 10.,
                  head_split: bool = False,
                  dropout: float = 0.1,
@@ -358,8 +359,10 @@ class PersistentAttentionModel(nn.Module):
             Input emedding for embeding module. If int, it creates a linear projection.
         d_v: int
             Dimensions for value matrix.
-        max_edge_length: int
+        max_edge_length: float
             Maximum length to which a filtration reaches.
+        persistence_dimension: int
+            Maximum dimesion of persistence.
         c: float
             Clipping value for probability calculation of decoder.
         head_split: bool
@@ -389,6 +392,7 @@ class PersistentAttentionModel(nn.Module):
         self.embeder = embeder
         self.d_v = d_v
         self.max_edge_length = max_edge_length
+        self.persistence_dimension = persistence_dimension
         self.c = c
         self.head_split = head_split
         self.dropout = dropout
@@ -425,8 +429,8 @@ class PersistentAttentionModel(nn.Module):
             # Will use persistence layer
             self.PersLay = PersistenceEmbedding(d_m=self.d_m,
                                                 d_ff=1_024,
-                                                persistence_dimension=2,
-                                                options={"resolution": 100, "num_landscapes": 5},
+                                                persistence_dimension=persistence_dimension,
+                                                options={"resolution": 200, "num_landscapes": 5},
                                                 max_edge_length=max_edge_length)
 
     def forward(self,

@@ -415,7 +415,10 @@ class PersistenceEmbedding(nn.Module):
             persistence signatures of the input.
         """
         # Most often, this is rips complex
-        points = src.cpu().detach().numpy()
+        points = src.cpu().detach()
+        # Normalize input point cloud
+        points = points / torch.max(points, dim=1).values.unsqueeze(1)
+
         cmpx = self.representation(points=points,
                                    max_edge_length=self.max_edge_length).create_simplex_tree(max_dimension=self.persistence_dimension)
         # Have filtration information available

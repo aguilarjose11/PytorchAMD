@@ -48,6 +48,8 @@ def create_parser():
     parser.add_argument('--device', type=str, default="cuda", help='Device to train on. Either cuda or cpu.')
     parser.add_argument('--graph_size', type=int, default=20, help='Number of nodes for combinatorial problem.')
     parser.add_argument('--head_split', action='store_true', default=False, help='Flag indicating whether to split d_v/d_k over attention heads rather than having their own individual heads. Will reduce the actual dimension of these by --heads.')
+    parser.add_argument('--max_edge_length', type=int, default=10, help='Maximum filtration length for rips filtration.')
+    parser.add_argument('--persistence_dimension', type=int, default=2, help='Maximum dimension for persistence.')
 
     # Saving information
     parser.add_argument('--file', type=str, default="PAM", help='File root name.')
@@ -145,6 +147,8 @@ if __name__ == '__main__':
                                      n_nodes=args.graph_size, # Not used
                                      embeder=args.problem_dimension,
                                      d_v=d_v,
+                                     max_edge_length= args.max_edge_length,
+                                     persistence_dimension=args.persistence_dimension,
                                      c=args.c,
                                      head_split=args.head_split,
                                      dropout=args.dropout,
@@ -168,6 +172,7 @@ if __name__ == '__main__':
     sub_epochs = args.environments // args.sub_environments
     start_time = timeit.default_timer()
     rewards_over_epochs = []
+    rewards_std_over_epochs = []
     for epoch in range(args.epochs):
         rewards_over_batches = []
         ''' In the original paper, the authors use 1,250,000 samples per epoch. Due to computational and memory limitations
@@ -241,15 +246,19 @@ if __name__ == '__main__':
             seeds += args.sub_environments
         # Verbosity
         rewards_over_epochs.append(np.mean(np.array(rewards_over_batches)))
+        rewards_std_over_epochs.append(np.std(np.array(rewards_over_batches)))
         if args.verbose and epoch % 1 == 0:
             avg_reward = np.mean(rewards_over_epochs[-1:])
-            print(f"Epoch: {epoch} with Average Reward {avg_reward} - std: {np.std(rewards_over_epochs[-1:])} for last epoch", )
+            print(f"Epoch: {epoch} with Average Reward {avg_reward} - std: {np.std(rewards_over_epochs[:])} for last epoch", )
     end_time = timeit.default_timer()
     # Save collected data
     rewards_to_plot = [[batch_r] for batch_r in rewards_over_epochs]
+    rewards_std_to_plot = [[batch_r] for batch_r in rewards_std_over_epochs]
     rewards = pd.DataFrame(rewards_to_plot, columns=["Train"])
+    rewards_std = pd.DataFrame(rewards_std_to_plot, columns=["Train"])
     experiment_data = {
         "rewards": rewards,
+        "rewards_std": rewards_std,
         "args": args,
         "runtime": start_time - end_time,
     }
