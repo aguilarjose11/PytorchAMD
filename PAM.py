@@ -48,7 +48,7 @@ def create_parser():
     parser.add_argument('--device', type=str, default="cuda", help='Device to train on. Either cuda or cpu.')
     parser.add_argument('--graph_size', type=int, default=20, help='Number of nodes for combinatorial problem.')
     parser.add_argument('--head_split', action='store_true', default=False, help='Flag indicating whether to split d_v/d_k over attention heads rather than having their own individual heads. Will reduce the actual dimension of these by --heads.')
-    parser.add_argument('--max_edge_length', type=int, default=10, help='Maximum filtration length for rips filtration.')
+    parser.add_argument('--max_edge_length', type=float, default=10, help='Maximum filtration length for rips filtration.')
     parser.add_argument('--persistence_dimension', type=int, default=2, help='Maximum dimension for persistence.')
 
     # Saving information
