@@ -1,6 +1,5 @@
 --file PAM
 --dir .
---exp_label test
 --d_m 128
 --d_k 64
 --d_v 64

@@ -32,7 +32,7 @@ def create_parser():
     parser.add_argument('--d_ff', type=int, default=128, help='Dimensions of hidden layers within neural networks.')
     parser.add_argument('--c', type=float, default=10., help='Clipping value for attention mechanisms.')
     parser.add_argument('--dropout', type=float, default=0.1, help='Dropout probability.')
-    parser.add_argument('--graph_emb', type=str, default='avg', help='Technique used in computing graph embedding for decoder.')
+    parser.add_argument('--graph_emb', type=str, default=None, help='Technique used in computing graph embedding for decoder.')
     parser.add_argument('--recompute_emb', action='store_true', default=False, help='Flag indicating whether graph embeddings must be re-computed every time.')
 
     # Experiment and Environment specifics
@@ -123,6 +123,8 @@ if __name__ == '__main__':
     # Create file names for experiments
     experiment_params = f"heads_{args.h}_layers_{args.N}_g-embedding_{args.graph_emb}_lr_{args.lr}_envs_{args.environments}_epochs_{args.epochs}_batch-len_{args.batch_size}_problem_{args.problem}_nodes_{args.graph_size}_dim_{args.problem_dimension}"
     exp_file = os.path.join(args.dir, f"experiment_{args.exp_label}_{args.file}_{experiment_params}")
+    if args.verbose:
+        print(f'Experiment File Root Name: {exp_file}')
 
     # Create batched environments. There will be sub_environments // batch_size batches
     total_batches = args.sub_environments // args.batch_size # Batches per sub_sample
@@ -249,7 +251,7 @@ if __name__ == '__main__':
         rewards_std_over_epochs.append(np.std(np.array(rewards_over_batches)))
         if args.verbose and epoch % 1 == 0:
             avg_reward = np.mean(rewards_over_epochs[-1:])
-            print(f"Epoch: {epoch} with Average Reward {avg_reward} - std: {np.std(rewards_over_epochs[:])} for last epoch", )
+            print(f"Epoch: {epoch} with Average Reward {avg_reward} - std: {np.std(rewards_over_batches[:])} for last epoch", )
     end_time = timeit.default_timer()
     # Save collected data
     rewards_to_plot = [[batch_r] for batch_r in rewards_over_epochs]

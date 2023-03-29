@@ -332,7 +332,12 @@ class MultiHeadAttention(nn.Module):
 class PersistenceEmbedding(nn.Module):
     def __init__(self,
                  d_m: int,
+                 d_k: int,
+                 h: int,
                  d_ff: int,
+                 d_v: int = None,
+                 head_split: bool = True,
+                 dropout: float = 0.1,
                  persistence_dimension: int = 2,
                  representation: str = "rips",
                  vectorization: str = "landscape",
@@ -374,7 +379,7 @@ class PersistenceEmbedding(nn.Module):
         # Set up topological representation of data.
         if representation == "rips":
             self.representation = gd.RipsComplex
-
+        # Maybe introduce gd.AlphaComplex
         # Set up topological vectorization to hilbert-space
         if vectorization == "landscape":
             self.vectorization = gudhi.representations.Landscape(num_landscapes=options['num_landscapes'],
@@ -387,14 +392,18 @@ class PersistenceEmbedding(nn.Module):
         self.persistence_dimension = persistence_dimension
         # Input/output dimensions
         self.d_m = d_m
+        self.d_k = d_k
+        self.h = h
         # Neural net hidden layer
         self.d_ff = d_ff
+        self.d_v = d_v
+        self.hed_split = head_split
+        self.dropout = dropout
         # Maximum reach of filtration.
         self.max_edge_length = max_edge_length
-        # Create neural network
-        self.layer_1 = nn.Linear(self.d_vect, d_ff)
-        self.relu = nn.ReLU()
-        self.layer_2 = nn.Linear(d_ff, d_m)
+        self.register_buffer('Dgms', None)
+
+
 
         # gd.representations.DiagramSelector(limit=np.inf, point_type="finite")
 
@@ -433,7 +442,8 @@ class PersistenceEmbedding(nn.Module):
         return torch.FloatTensor(Dg_vect).squeeze()
 
     def forward(self,
-                src: Tensor
+                src: Tensor,
+                recompute_graph_vect: bool,
                 ) -> Tensor:
         """Calculate Persistence embedding
 
@@ -454,17 +464,17 @@ class PersistenceEmbedding(nn.Module):
         Compute selected vectorization.
         pass vectorization through feed-forward neural network
         """
-        device = list(self.parameters())[0].device
-
         # Batch-wise computation of hilbert space vector form of diagram.
         vectors = []
-        for point_cloud in src:
-            vect = self._get_persistence_vector(point_cloud)
-            vectors.append(vect)
-        # Dgms -> batch x d_vect
-        Dgms = torch.stack(vectors).to(device)
-        # ff_1 -> batch x d_ff
-        ff_1 = self.relu(self.layer_1(Dgms))
-        # ff_2 -> batch x d_m
-        ff_2 = self.layer_2(ff_1)
-        return ff_2
+        if recompute_graph_vect or self.Dgms is None:
+            for point_cloud in src:
+                vect = self._get_persistence_vector(point_cloud)
+                vectors.append(vect)
+            # Dgms -> batch x 1 x d_vect
+            Dgms = torch.stack(vectors).reshape((src.shape[0], 1, -1))
+            self.Dgms = Dgms.detach()
+            #import pdb; pdb.set_trace()
+        else:
+            Dgms = self.Dgms
+
+        return Dgms

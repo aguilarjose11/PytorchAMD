@@ -219,7 +219,7 @@ class PersistentDecoderLayer(nn.Module):
                  c: float = 10.,
                  d_v: int = None,
                  head_split: bool = True,
-                 dropout: float = 0.1
+                 dropout: float = 0.1,
                  ):
         """ Decode information to create a probability distribution over which node is most optimal.
         parameters
@@ -243,7 +243,10 @@ class PersistentDecoderLayer(nn.Module):
             at the cost of a reduced latent space dimensionality.
         dropout: float
             Regularization dropout.
-
+        graph_emb_vect_style: str
+            style in which the graph embeding vector is used. See PersistenceAttentionModel for more information.
+        d_graph_emb_vect: int
+            Dimensions of graph embedding vector.
         """
         super().__init__()
         self.d_m = d_m
@@ -266,7 +269,6 @@ class PersistentDecoderLayer(nn.Module):
                                           optim='emb',
                                           head_split=head_split,
                                           dropout=dropout)
-        ### ! Experimental changes ! ###
 
         # Attention layer for the creation of a probability distribution.
         self.pda = PDAttention(d_m=d_m,
@@ -279,7 +281,8 @@ class PersistentDecoderLayer(nn.Module):
                 ctxt:     Tensor,
                 src_emb:  Tensor,
                 mask_graph: Tensor = None,
-                return_node_idx: bool = False
+                return_node_idx: bool = False,
+                graph_emb_vect: Tensor = None
                 ) -> Union[Tensor, Tuple[Tensor, Tensor]]:
         """Decode embedding
         parameters
@@ -335,7 +338,8 @@ class PersistentAttentionModel(nn.Module):
                  dropout: float = 0.1,
                  use_graph_emb: str = None,
                  batches: int=None,
-                 reuse_graph_emb: bool=False):
+                 reuse_graph_emb: bool=False,
+                 graph_emb_vect_style: str='ctxt'):
         """
         
 
@@ -377,13 +381,19 @@ class PersistentAttentionModel(nn.Module):
         reuse_graph_emb: bool
             Flag indicating whether the graph embedding shall be computed for every new problem. If using
             eval mode, do not forget to clean up graph_emb_vect
+        graph_emb_vect_style: str
+            Style in which the graph embeding vector will be used. There are two main ways: ctxt, attention, ctxt-attention.
+            - ctxt will concatenate the graph embedding vector to the context.
+            - attention will add an extra layer to the decoder before the probabilistic attention which will directly use
+              the information.
+            - ctxt-attention will implement both.
 
         """
         super().__init__()
 
         self.d_m = d_m
         # Increment the dimension by d_m, as applying the graph embedding to the context increases its size by d_m.
-        self.d_c = d_c + d_m if use_graph_emb is not None else 0
+        self.d_c = d_c + (d_m if use_graph_emb is not None else 0)
         self.d_k = d_k
         self.h = h
         self.N = N
@@ -399,12 +409,13 @@ class PersistentAttentionModel(nn.Module):
         self.use_graph_emb = use_graph_emb
         self.batches = batches
         self.reuse_graph_emb = reuse_graph_emb
+        self.graph_emb_vect_style = graph_emb_vect_style
         # Use placeholder batch
         batches = 1 if batches is None else batches
         # This buffer will contain the computed graph embeddings, allowing iterative generation of a path.
         # graph_emb -> batches x n_nodes x d_m
-        self.register_buffer('graph_emb', torch.rand(batches, n_nodes, d_m))
-        self.register_buffer('graph_emb_vect', torch.rand(batches, 1, d_m))
+        self.register_buffer('graph_emb', None)
+        self.register_buffer('graph_emb_vect', None)
 
         self.encoder = PersistentTransformerEncoder(d_m=d_m,
                                           d_k=d_k,
@@ -416,6 +427,21 @@ class PersistentAttentionModel(nn.Module):
                                           d_v=d_v,
                                           head_split=head_split,
                                           dropout=dropout)
+        if self.use_graph_emb is not None and self.use_graph_emb[0] == 'p':
+            # Will use persistence layer
+            self.PersLay = PersistenceEmbedding(d_m=self.d_m,
+                                                d_k=d_k,
+                                                h=h,
+                                                d_ff=1_024,
+                                                d_v=d_v,
+                                                head_split=head_split,
+                                                dropout=dropout,
+                                                persistence_dimension=persistence_dimension,
+                                                options={"resolution": 200, "num_landscapes": 5},
+                                                max_edge_length=max_edge_length)
+            self.d_vect = 200 * 5
+            self.embeder = nn.Linear(200*5, d_m)
+
         self.decoder = PersistentDecoderLayer(d_m=d_m,
                                     d_c=self.d_c,
                                     d_k=d_k,
@@ -424,14 +450,8 @@ class PersistentAttentionModel(nn.Module):
                                     c=c,
                                     d_v=d_v,
                                     head_split=head_split,
-                                    dropout=dropout)
-        if self.use_graph_emb == 'p':
-            # Will use persistence layer
-            self.PersLay = PersistenceEmbedding(d_m=self.d_m,
-                                                d_ff=1_024,
-                                                persistence_dimension=persistence_dimension,
-                                                options={"resolution": 200, "num_landscapes": 5},
-                                                max_edge_length=max_edge_length)
+                                    dropout=dropout,)
+
 
     def forward(self,
                 graph: Tensor,
@@ -465,7 +485,7 @@ class PersistentAttentionModel(nn.Module):
 
         """
         device = list(self.parameters())[0].device
-        if not reuse_embeding or re_compute_embedding:
+        if not reuse_embeding or re_compute_embedding or self.graph_emb is None:
             # Compute mask for embedder's self-MHA.
             # We will first apply the logical or operator. Using dot product produces an and operator.
             # mask_emb -> b x nodes x nodes (unsqueeze)-> b x 1 x nodes x nodes
@@ -479,14 +499,9 @@ class PersistentAttentionModel(nn.Module):
             # Compute node new node embeddings
             # src_emb -> b x nodes x d_m
             src_emb = self.encoder(graph, mask_emb)
-            # Figure out whether to replace values or entire buffer. ngl, this is for my own practice. This isn't needed
-            if self.batches is not None:
-                # Replace the graph embeddings with the newly calculated, maintaining the buffer shape
-                self.graph_emb[:] = src_emb.detach()
-            else:
-                # The number of batches encoded before is different. Replacing the entire Tensor.
-                # src_emb -> b x nodes x d_m
-                self.graph_emb = src_emb.detach()
+            # The number of batches encoded before is different. Replacing the entire Tensor.
+            # src_emb -> b x nodes x d_m
+            self.graph_emb = src_emb.detach()
         else:
             # Re-use previous embeddings!
             # src_emb -> b x nodes x d_m
@@ -498,21 +513,32 @@ class PersistentAttentionModel(nn.Module):
         # Replace all True values for negative infinity.
         mask_dec[mask_dec_graph] = -torch.inf
         mask_dec = mask_dec.to(device)
-        if not self.reuse_graph_emb or self.graph_emb_vect is None or re_compute_embedding:
-            # We will re-compute or compute for the first time the entire graph embedding.
-            if self.use_graph_emb == "avg":
-                # If we are to use avg graph embeddings, then, calculate them and add them to ctxt
-                # graph_emb_avg -> b x 1 x d_m
-                graph_emb_avg = self.graph_emb.detach().mean(-2).unsqueeze(1)
-                # graph_emb_avg -> b x 1 x d_v (+ d_m)
-                self.graph_emb_vect = graph_emb_avg
-            elif self.use_graph_emb == "p":
-                # If we are to use avg graph embeddings, then, calculate them and add them to ctxt
-                # graph_emb_avg -> b x 1 x d_m
-                graph_emb_p = self.PersLay(self.graph_emb.detach()).unsqueeze(1)
-                # graph_emb_avg -> b x 1 x d_v (+ d_m)
-                self.graph_emb_vect = graph_emb_p
-        ctxt = torch.cat((ctxt, self.graph_emb_vect), dim=-1)
+        recompute_graph_vect = not self.reuse_graph_emb or re_compute_embedding
+
+        # We will re-compute or compute for the first time the entire graph embedding.
+        if self.use_graph_emb == "avg":
+            # If we are to use avg graph embeddings, then, calculate them and add them to ctxt
+            # graph_emb_avg -> b x 1 x d_m
+            graph_emb_avg = self.graph_emb.detach().mean(-2).unsqueeze(1)
+            # graph_emb_avg -> b x 1 x d_v (+ d_m)
+            graph_emb_vect = graph_emb_avg
+        elif self.use_graph_emb == "p-raw":
+            # If we are to use avg graph embeddings, then, calculate them and add them to ctxt
+            # graph_emb_p -> b x 1 x d_vect
+            graph_emb_p = self.PersLay(graph.detach(),
+                                       recompute_graph_vect=recompute_graph_vect).to(device)
+            #graph_emb_p = self.PersLay(self.graph_emb.detach()).unsqueeze(1)
+            # graph_emb_vect -> b x 1 x d_vect
+            graph_emb_vect = self.embeder(graph_emb_p)
+        elif self.use_graph_emb == "p-emb":
+            # If we are to use avg graph embeddings, then, calculate them and add them to ctxt
+            # graph_emb_p -> b x 1 x d_vect
+            graph_emb_p = self.PersLay(self.graph_emb.detach(),
+                                       recompute_graph_vect=recompute_graph_vect).to(device)
+            # graph_emb_vect -> b x 1 x d_vect
+            graph_emb_vect = self.embeder(graph_emb_p)
+        if self.use_graph_emb is not None:
+            ctxt = torch.cat((ctxt, graph_emb_vect), dim=-1)
         assert ctxt.shape[-1] == self.d_c, f"The context shape and d_c do not match! ctxt: {ctxt.shape[-1]} vs d_c: {self.d_c}."
         # probability_dist -> b x 1 x nodes
         # selection -> b x 1
