@@ -166,3 +166,6 @@ class REINFORCE(nn.Module):
         self.rewards = []
         self.states = []
         self.warm_alpha += 1 / self.warm_up
+        self.policy.graph_emb = None
+        self.policy.graph_emb_vect = None
+        self.policy.PersLay.Dgms = None

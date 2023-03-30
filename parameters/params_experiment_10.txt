@@ -1,0 +1,25 @@
+--file PAM
+--dir .
+--d_m 128
+--d_k 64
+--d_v 64
+--h 8
+--N 3
+--d_ff 512
+--max_edge_length 0.7
+--persistence_dimension 4
+--c 10.
+--dropout 0.1
+--lr 0.0001
+--environments 128000
+--sub_environments 1024
+--batch_size 1024
+--epochs 60
+--problem TSP
+--problem_dimension 2
+--device cuda
+--graph_size 10
+--head_split
+--file PAM
+--dir .
+--verbose

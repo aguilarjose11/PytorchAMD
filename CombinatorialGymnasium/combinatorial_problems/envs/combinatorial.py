@@ -246,11 +246,11 @@ class Phase1Env(gym.Env):
             nodes = self.np_random.random((self.num_nodes, self.coordinate_dimensions))
             end_node = np.zeros(self.num_nodes)
             objectives = np.zeros(self.num_nodes)
-            objectives[np.random.choice(range(1, self.num_nodes), self.num_objectives, replace=False)] = 1
-            if np.random.uniform(0, 1) <= 0.5:  # start node is end node
+            objectives[self.np_random.choice(range(1, self.num_nodes), self.num_objectives, replace=False)] = 1
+            if self.np_random.uniform(0, 1) <= 0.5:  # start node is end node
                 idx = 0
             else:  # end node is non-objective node
-                idx = np.random.choice(np.where(objectives[1:] == 0)[0]+1)  # adjust to not include start node in random choice, but then add one after to account for start node
+                idx = self.np_random.choice(np.where(objectives[1:] == 0)[0]+1)  # adjust to not include start node in random choice, but then add one after to account for start node
 
             end_node[idx] = 1
             self.end_idx = idx

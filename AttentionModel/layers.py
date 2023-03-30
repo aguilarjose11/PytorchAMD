@@ -6,7 +6,7 @@ Modules/Layers for the Dynamic Attention Model (AM-D)
 @author: Jose E. Aguilar Escamilla
 @email: jose.efraim.a.e@gmail.com
 """
-
+import numpy as np
 # Python Libraries
 
 # External Libraries
@@ -14,6 +14,10 @@ Modules/Layers for the Dynamic Attention Model (AM-D)
 import torch
 import torch.nn as nn
 from torch import Tensor
+import functorch
+
+import gudhi as gd
+import gudhi.representations
 import math
 
 
@@ -99,7 +103,7 @@ class PDAttention(nn.Module):
         # u -> batch x 1 x nodes
         u = (self.c * self.tan_h(u)) + mask if mask is not None else 0
         # p -> batch x 1 x nodes
-        p = self.softmax(u).nan_to_num()
+        p = self.softmax(u.nan_to_num()).nan_to_num()
         return p
 
 
@@ -247,7 +251,8 @@ class MultiHeadAttention(nn.Module):
         QK = (Q @ K.transpose(-1, -2)) + (mask if mask is not None else 0)
         QK = QK / (self.d_k ** (1/2))
         # a -> batch x h x n_t x d_v
-        a = self.softmax(QK).nan_to_num() @ V
+
+        a = self.softmax(QK.nan_to_num()).nan_to_num() @ V
         return a
 
     def forward(self,
@@ -323,3 +328,153 @@ class MultiHeadAttention(nn.Module):
         output = self.dropout_o(output)
         return output
 
+
+class PersistenceEmbedding(nn.Module):
+    def __init__(self,
+                 d_m: int,
+                 d_k: int,
+                 h: int,
+                 d_ff: int,
+                 d_v: int = None,
+                 head_split: bool = True,
+                 dropout: float = 0.1,
+                 persistence_dimension: int = 2,
+                 representation: str = "rips",
+                 vectorization: str = "landscape",
+                 options: dict = None,
+                 max_edge_length: float=0.5):
+        """Create Neural network that captures percistence information
+
+        parameters
+        ---------
+        d_m: int
+            Output dimension. input expected in shape batch x nodes x d_in. Output expected in
+            shape batch x 1 x d_m
+        d_ff: int
+            Hidden layer of neural network.
+                representation: str
+        persistence_dimension: int
+            Maximum dimension of persistence signatures to attend to.
+        Topological representation to use. Options are:
+            1. Rips Complex ('rips')
+            2. Alpha Complex (Coming Soon!)
+        vectorization: str
+            Vectorization function into some hilbert space. Options are:
+            1. Persistence Landscapes ('landscape')
+            2. sillohuete (coming soon)
+        options: dict
+            Additional options for vectorization and representation functions.
+            vectorization: 'landscape'
+                resolution: int
+                num_landscapes: int
+        max_edge_length: float
+            Maximum reach of filtration.
+        """
+        super().__init__()
+        # Check that options are valid
+        assert vectorization in ["landscape"], f"Invalid vectorization/representation {vectorization}."
+        assert representation in ["rips"], f"Invalid representation {representation}. Only rips is supported."
+        assert options is not None, f"Did not pass additional parameters!"
+
+        # Set up topological representation of data.
+        if representation == "rips":
+            self.representation = gd.RipsComplex
+        # Maybe introduce gd.AlphaComplex
+        # Set up topological vectorization to hilbert-space
+        if vectorization == "landscape":
+            self.vectorization = gudhi.representations.Landscape(num_landscapes=options['num_landscapes'],
+                                                              resolution=options['resolution'])
+            self.num_landscapes = options['num_landscapes']
+            self.resolution = options['resolution']
+            self.d_vect = options['num_landscapes'] * options['resolution']
+
+        # Additional parameters
+        self.persistence_dimension = persistence_dimension
+        # Input/output dimensions
+        self.d_m = d_m
+        self.d_k = d_k
+        self.h = h
+        # Neural net hidden layer
+        self.d_ff = d_ff
+        self.d_v = d_v
+        self.hed_split = head_split
+        self.dropout = dropout
+        # Maximum reach of filtration.
+        self.max_edge_length = max_edge_length
+        self.register_buffer('Dgms', None)
+
+
+
+        # gd.representations.DiagramSelector(limit=np.inf, point_type="finite")
+
+    def _get_persistence_vector(self,
+                                 src: Tensor
+                                 ) -> Tensor:
+        """Compute persistence diagrams
+
+        parameters
+        ----------
+        src: Tensor
+            An input point cloud of shape nodes x d_m
+
+        return
+        ------
+        Dg: Tensor
+            Persistence diagram of shape per_points x 2, where per_points is highly dependent on the
+            persistence signatures of the input.
+        """
+        # Most often, this is rips complex
+        points = src.cpu().detach()
+        # Normalize input point cloud
+        points = points / torch.max(points, dim=1).values.unsqueeze(1)
+
+        cmpx = self.representation(points=points,
+                                   max_edge_length=self.max_edge_length).create_simplex_tree(max_dimension=self.persistence_dimension)
+        # Have filtration information available
+        cmpx.compute_persistence()
+        # Dg -> persistence features x 2 | Note: persistence features depends on input.
+        Dg = cmpx.persistence_intervals_in_dimension(self.persistence_dimension - 1)
+        # Clip infinity values to the maximum edge length
+        Dg[Dg == np.inf] = self.max_edge_length
+        # Dg_vect -> 1 x d_vect
+        Dg_vect = self.vectorization.fit_transform([Dg])
+        # Return -> d_vect
+        return torch.FloatTensor(Dg_vect).squeeze()
+
+    def forward(self,
+                src: Tensor,
+                recompute_graph_vect: bool,
+                ) -> Tensor:
+        """Calculate Persistence embedding
+
+        Parameters
+        -----------
+        src: Tensor
+            Input point cloud to be used for persistence computations. Expected
+            shape: batch x nodes x d_m
+
+        Returns
+        -------
+        persistence_embedding: Tensor
+            The Persistence/structural information embedded into d_model
+        """
+
+        """Algorithm:
+        compute persistance diagram
+        Compute selected vectorization.
+        pass vectorization through feed-forward neural network
+        """
+        # Batch-wise computation of hilbert space vector form of diagram.
+        vectors = []
+        if recompute_graph_vect or self.Dgms is None:
+            for point_cloud in src:
+                vect = self._get_persistence_vector(point_cloud)
+                vectors.append(vect)
+            # Dgms -> batch x 1 x d_vect
+            Dgms = torch.stack(vectors).reshape((src.shape[0], 1, -1))
+            self.Dgms = Dgms.detach()
+            #import pdb; pdb.set_trace()
+        else:
+            Dgms = self.Dgms
+
+        return Dgms
