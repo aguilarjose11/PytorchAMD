@@ -136,3 +136,5 @@ dmypy.json
 *.ps
 
 *.idea
+Experiment-pseudooutput.txt
+dataset/*
