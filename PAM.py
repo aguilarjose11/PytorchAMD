@@ -232,7 +232,6 @@ if __name__ == '__main__':
                                               re_compute_embedding=False).numpy()
                     state, reward, terminated, truncated, info = env.step(action)
                     end_idx = action.squeeze()
-                    #import pdb; pdb.set_trace()
                     am_REINFORCE.rewards.append(reward)
                     batch_rewards += reward
                     done = terminated.all() or truncated.all()
