@@ -13,7 +13,7 @@
 --environments 128000
 --sub_environments 512
 --batch_size 64
---epochs 10
+--epochs 20
 --problem TSP
 --problem_dimension 2
 --device cuda
