@@ -33,7 +33,7 @@ h = 8
 N = 3
 d_ff = 128
 n_nodes = nodes
-embeder = 4
+embeder = 5
 d_v = 128
 c = 10.
 head_split = True
@@ -42,7 +42,7 @@ use_graph_emb = True
 k = 4
 samples = k*1024 #1024  # 256 #1_024
 batches = 1
-epochs = 30  # same number of weight updates
+epochs = 60  # same number of weight updates
 #epochs *= 1_250  # ???
 
 assert samples % batches == 0, f"Number of samples is not divisible by specified batches: {samples} % {batches} = {samples % batches}."
@@ -50,7 +50,7 @@ assert samples % batches == 0, f"Number of samples is not divisible by specified
 # We reset them here already, as we want to keep the unique graphs generated here.
 print("Here1")
 batched_envs = [
-    gym.vector.make("combinatorial_problems/Phase1Env-v0",
+    gym.vector.make("combinatorial_problems/Phase2Env-v0",
                     num_nodes=nodes,
                     num_envs=batches,
                     num_objectives=objectives,
@@ -82,7 +82,7 @@ am_REINFORCE = REINFORCE(policy=agent,
                          beta=0.9,
                          gradient_clip=(1., torch.inf),
                          eps=1e-9).to(device)
-am_REINFORCE.load_state_dict(torch.load("NO_MASKS/STATE_SAVE_EPOCH_10"))
+#am_REINFORCE.load_state_dict(torch.load("PHASE_2/STATE_SAVE_EPOCH_0"))
 """train = []
 for i in range(0, samples):
     train.append(gym.make("combinatorial_problems/Phase1Env-v0", num_nodes=nodes, num_objectives=objectives,
@@ -112,10 +112,12 @@ def eval_env(env, val=False, render=False, epoch=0, seed=None, use_masking=False
         start_idx = info["agent_start_idx"]
         end_idx = info["agent_end_idx"]
         obj_idx = info["agent_obj_idx"]
-        non_obj_idx = info["agent_non_obj_idx"][0]
+        non_obj_idx = info["agent_non_obj_idx"]
         vis_idx = info["agent_visited_idx"]
         #curr_idx = np.asarray(info["agent_curr_idx"], dtype=np.int64)
         curr_idx = info["agent_curr_idx"]
+        obstacle_idx = info["agent_obstacle_idx"]
+        #print("  Num Obj: {}, Num Obst: {}, Non non-obj: {}".format(len(obj_idx), len(obstacle_idx), len(non_obj_idx)))
         if render:
             env.render()
         # graph -> b x n_nodes x coords
@@ -156,8 +158,6 @@ def eval_env(env, val=False, render=False, epoch=0, seed=None, use_masking=False
             mask_dec_graph = torch.tensor(
                 np.logical_not(np.ones(batches * 1 * nodes)).reshape(batches, 1, nodes)).to(
                 device)
-
-
 
         reuse_embeding = False
 
@@ -227,7 +227,7 @@ sys.exit()"""
 import time
 import logging
 NUM_BATCHES = k*64  # batch size = num_samples // NUM_BATCHES
-logging.basicConfig(filename="logging_switch_masks.log", level=logging.DEBUG, encoding='utf-8')
+logging.basicConfig(filename="PHASE_2.log", level=logging.DEBUG, encoding='utf-8')
 logging.debug('This will get logged')
 
 for epoch in range(epochs):
@@ -237,13 +237,15 @@ for epoch in range(epochs):
     #np.random.shuffle(train)
     train = []
     for i in range(0, samples):
-        train.append(gym.make("combinatorial_problems/Phase1Env-v0", num_nodes=nodes, num_objectives=objectives,
-                              random_objectives=random_objectives, new_on_reset=False))
+        train.append(gym.make("combinatorial_problems/Phase2Env-v0", num_nodes=nodes, num_objectives=objectives,
+                              random_objectives=random_objectives, new_on_reset=True, obstacle_max_distance=0.35))
     train = np.asarray(train)
-    print(eval_env(train[0], render=True, epoch="ph1_test"))
+    #print(eval_env(train[0], render=True, epoch="phs2_epoch_adjusted_obstacle"))
     rewards_over_batches = []
-
-    use_masking = False
+    if epoch < 10:
+        use_masking = True
+    else:
+        use_masking = False
     for i, batch in enumerate(np.array_split(train, NUM_BATCHES)):
         msg = " Train Batch {}/{}".format(i + 1, NUM_BATCHES)
         print(msg)
@@ -293,7 +295,7 @@ for epoch in range(epochs):
     #am_REINFORCE.train()
 
     print(rewards_over_epochs)
-    torch.save(am_REINFORCE.state_dict(), "SWITCH_MASKS/STATE_SAVE_EPOCH_{}".format(epoch))
+    torch.save(am_REINFORCE.state_dict(), "PHASE_2/STATE_SAVE_EPOCH_{}".format(epoch))
 
 
 

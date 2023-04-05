@@ -40,9 +40,9 @@ dropout = 0.
 use_graph_emb = True
 
 samples = 1_024
-batches = 512
+batches = 1
 epochs = 10
-epochs *= 1_250 #
+epochs *= 1_250  #
 asynchronous = False
 
 assert samples % batches == 0, f"Number of samples is not divisible by specified batches: {samples} % {batches} = {samples % batches}."
@@ -87,7 +87,9 @@ for epoch in range(epochs):
         start_idx = info["agent_start_idx"]
         done = False
         batch_rewards = 0
+        j = 0
         while not done:
+            print(j, torch.cuda.memory_allocated())
             # graph -> b x n_nodes x coords
             graph_nodes = np.stack(info["nodes"])
             graph = torch.FloatTensor(graph_nodes).reshape(batches, nodes, 2).to(device)
@@ -105,6 +107,7 @@ for epoch in range(epochs):
             mask_emb_graph = torch.zeros(batches, 1, nodes).bool().to(device) # Empty Mask!
             # mask_dex_graph -> b x 1 x nodes
             masks = np.stack(info["mask"])
+            print(masks)
             mask_dec_graph = torch.tensor(masks).unsqueeze(1).to(device)
             reuse_embeding = False
 
@@ -118,6 +121,8 @@ for epoch in range(epochs):
             am_REINFORCE.rewards.append(reward)
             batch_rewards += reward
             done = terminated.all() or truncated.all()
+            print(j, torch.cuda.memory_allocated())
+            j += 1
         rewards_over_batches.append(np.array(batch_rewards).mean())
         am_REINFORCE.update()
     rewards_over_epochs.append(np.mean(np.array(rewards_over_batches)))
