@@ -129,11 +129,22 @@ class REINFORCE(nn.Module):
         # self.rewards -> R^episode_length
         if discounted:
             # Apply the weighted sum
-            running_g: float = 0
+            #running_g: float = 0
+            #g_t = []
             g_t = []
-            for reward in self.rewards[::-1]:
+            for env_rewards in self.rewards:
+                running_g: float = 0
+                g = []
+                for reward in env_rewards[::-1]:
+                    running_g = reward + self.gamma * running_g
+                    g.insert(0, np.array(running_g))
+                g_t.append(g)
+            g_t = np.concatenate(g_t)
+
+
+            """for reward in self.rewards[::-1]:
                 running_g = reward + self.gamma * running_g
-                g_t.insert(0, np.array(running_g))
+                g_t.insert(0, np.array(running_g))"""
         else:
             # Return rewards as is
             g_t = self.rewards
@@ -155,12 +166,13 @@ class REINFORCE(nn.Module):
         """
 
         # Step 1: Compute deltas from weighted rewards
-        G = self._get_rewards(discounted=True)
+        G = self._get_rewards(discounted=True)  # [::-1]  # undo reverse???
         #delta = G
         if self.running_G is None:
             self.running_G = np.mean(G, axis=0)
         else:
-            self.running_G = self.beta * self.running_G + (1 - self.beta) * G.mean()
+            #self.running_G = self.beta * self.running_G + (1 - self.beta) * G.mean()
+            pass
         delta = (G - self.running_G)
         delta_std = self.eps + delta.std(axis=0) if len(G) > 1 else 1
         delta = delta / delta_std
