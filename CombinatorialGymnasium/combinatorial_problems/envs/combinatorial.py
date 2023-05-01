@@ -267,6 +267,7 @@ class Phase1Env(gym.Env):
             end_node = np.zeros(self.num_nodes)
             objectives = np.zeros(self.num_nodes)
             if self.random_objectives:
+
                 self.num_objectives = self.np_random.choice(range(2, self.num_objectives))
 
             objectives[self.np_random.choice(range(1, self.num_nodes), self.num_objectives, replace=False)] = 1
@@ -427,7 +428,7 @@ class Phase2Env(gym.Env):
                  dynamic_probability_1: float = 0.005,
                  dynamic_probability_2: float = 0.02,
                  obstacle_min_distance: float = 0.10,
-                 obstacle_max_distance: float = 0.40,
+                 obstacle_max_distance: float = 0.15,
                  ):
         """Phase 2 Problem
         Find shortest path between a set of objective nodes given a graph. The agent will start at a random location,
@@ -495,6 +496,7 @@ class Phase2Env(gym.Env):
         self.random_objectives = random_objectives
         self.num_objectives = num_objectives
         self.nearest_obj_idx: int
+
         # Definition of observation and action spaces
         # agent: Index of node the agent currently sits on.
         # distance: Distance currently traveled
@@ -548,6 +550,7 @@ class Phase2Env(gym.Env):
             objectives = np.zeros(self.num_nodes)
             obstacles = np.zeros(self.num_nodes)
             if self.random_objectives:
+
                 self.num_objectives = self.np_random.choice(range(2, self.num_objectives))
 
             if self.random_obstacles:
@@ -562,19 +565,25 @@ class Phase2Env(gym.Env):
             end_node[idx] = 1
             self.end_idx = idx
             self.obj_idx = np.where(objectives == 1)[0]
-            self.non_obj_idx = np.where(objectives != 1)[0]
-            if self.end_idx in self.non_obj_idx:  # dont make end node obstacle
+            if self.end_idx == 0:
+                self.non_obj_idx = np.where(objectives != 1)[0]
                 idx = self.np_random.choice(self.non_obj_idx[np.where(self.non_obj_idx != self.end_idx)[0]],
                                             self.num_obstacles)
             else:
-                idx = self.np_random.choice(self.non_obj_idx, self.num_obstacles)  # choose non-obj nodes as obstacles
+                self.non_obj_idx = np.where(objectives != 1)[0][1:]
+
+                idx = self.np_random.choice(self.non_obj_idx[np.where(self.non_obj_idx != self.end_idx)[0]],
+                                            self.num_obstacles)
+
+
             obstacles[idx] = self.np_random.uniform(self.obstacle_min_distance, self.obstacle_max_distance, len(idx))
             self.obstacle_idx = idx
             self.non_obj_idx = np.setdiff1d(self.non_obj_idx, idx)
 
-
             self.nodes = np.hstack((nodes, objectives.reshape(-1, 1), end_node.reshape(-1, 1), obstacles.reshape(-1, 1)))
 
+        self.greedy_unvisited_obj = np.copy(self.obj_idx)
+        self.greedy_rewards = []
         # Agent's and Goal's nodes.
         self.agent_start_idx = 0
         self.iter = 0
@@ -661,13 +670,14 @@ class Phase2Env(gym.Env):
              action: int,
              ) -> Tuple[Observation, float, bool, bool, Information]:
         assert action < self.num_nodes, f"Invalid node {action} given! Should have been < {self.num_nodes}."
-        # Avoid extra dimensions that mess with Gymnasium.
-        action = action.squeeze()
-        # May need to add an assert or something to keep agent from selecting same node.
-        # Compute the distance traveled by going to the new node.
+        # Calculate Rewards. Gives high punishment for staying, but no error
+        time_penalty = - 1.0
+
+        # take care of greedy baseline
         prev_node = self.nodes[self.trajectory[-1]]
+        action = action.squeeze()
         new_node = self.nodes[action]
-        distance = np.linalg.norm(prev_node[0:2] - new_node[0:2])
+
         if np.all(prev_node == new_node):
             points = None
         else:
@@ -677,11 +687,48 @@ class Phase2Env(gym.Env):
             line = np.poly1d(coefficients)(fill)
             points = np.vstack((fill, line)).T
 
+
+        if len(self.greedy_unvisited_obj) == 0:
+            greedy_reward = 0 # time_penalty + (50 / (self.num_objectives + 1))
+        else:
+            ds = []
+            for node in self.greedy_unvisited_obj:
+                tmp_node = self.nodes[node]
+                ds.append(np.linalg.norm(prev_node[0:2] - tmp_node[0:2]))
+            idx = np.argmin(ds)
+            distance = np.min(ds)
+            greedy_next_node = self.nodes[self.greedy_unvisited_obj[idx]]
+            self.greedy_unvisited_obj = np.concatenate((self.greedy_unvisited_obj[0:idx], self.greedy_unvisited_obj[idx+1:]))
+            vis_obj_reward = 50 / (self.num_objectives + 1)
+            obstacles = self.nodes[self.obstacle_idx]
+            distances = []
+            if len(obstacles) == 0:
+                obstacle_penalty = 0
+            else:
+                if points is not None:
+                    for obstacle in obstacles:
+                        distances.append(np.vstack([np.linalg.norm(points - np.tile(obstacle[0:2], (50, 1)), axis=-1),
+                                                    np.tile(obstacle[4], (50,))]).T)
+                    distances = np.vstack(distances)
+                else:
+                    for obstacle in obstacles:
+                        distances.append([np.linalg.norm(greedy_next_node[0:2] - obstacle[0:2]), obstacle[4]])
+                    distances = np.asarray(distances)
+                distances = distances[distances[:, 0] < distances[:, 1]][:,
+                            0] + 1e-3  # add 1e-3 for 0 (do not want infty)
+                obstacle_penalty = - np.sum(10.0 / distances)  # my heuristic
+            greedy_reward = (-1) * distance + time_penalty + vis_obj_reward + obstacle_penalty
+        self.greedy_rewards.append(greedy_reward)
+
+        # Avoid extra dimensions that mess with Gymnasium.
+
+
+        distance = np.linalg.norm(prev_node[0:2] - new_node[0:2])
         # Compute distance and mark node as visited.
         self.distance += distance
         if self.visited_nodes[action] == 0 and (
                 action in self.obj_idx or (np.all(self.visited_nodes[self.obj_idx]) and action == self.end_idx)):
-            vis_obj_reward = 10 / (len(self.obj_idx) + 1)
+            vis_obj_reward = 50 / (self.num_objectives + 1)
             self.obj_idx = np.setdiff1d(self.obj_idx[self.obj_idx != action], action)  # get rid of obj_idx
             t = np.copy(self.nodes[action])
             t[2] = 0
@@ -707,8 +754,7 @@ class Phase2Env(gym.Env):
         self.iter += 1
         # Truncation never happens as actions do not allow to go off bounds.
         truncated = False
-        # Calculate Rewards. Gives high punishment for staying, but no error
-        time_penalty = - 1.0
+
 
         obstacles = self.nodes[self.obstacle_idx]
         distances = []
@@ -724,7 +770,7 @@ class Phase2Env(gym.Env):
                     distances.append([np.linalg.norm(new_node[0:2] - obstacle[0:2]), obstacle[4]])
                 distances = np.asarray(distances)
             distances = distances[distances[:, 0] < distances[:, 1]][:, 0] + 1e-3  # add 1e-3 for 0 (do not want infty)
-            obstacle_penalty = - np.sum(0.1 / distances)  # my heuristic
+            obstacle_penalty = - np.sum(10.0 / distances)  # my heuristic
 
         reward = (-1) * distance + time_penalty + vis_obj_reward + non_vis_obj_penalty + obstacle_penalty
         self.current_reward = reward
