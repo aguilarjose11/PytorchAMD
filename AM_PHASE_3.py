@@ -24,9 +24,11 @@ ENVIRONMENT VARIABLES
 """
 nodes = 20
 num_objectives = 7
+num_obstacles = 2
+obstacle_min_distance = 0.10  # Minimum distance bound from an obstacle before the negative reward does not count
+obstacle_max_distance = 0.2  # Maximum distance bound from an obstacle before the negative reward does not count.
 random_objectives = True
 k = 4
-samples = k * 1024
 num_batches = k * 32  # batch size = num_samples // num_batches
 context = 1  # Number of context embeddings
 
@@ -34,7 +36,7 @@ context = 1  # Number of context embeddings
 MODEL VARIABLES
 """
 # Attention Model Parameters
-p = 1  # overall model parameter size hyper-parameter
+p = 3  # overall model parameter size hyper-parameter
 d_m = p * 128  # Model dimensions for embeddings.
 d_c = d_m * context  # Context dimensions.
 d_k = p * 128  # Dimensions of key.
@@ -42,7 +44,7 @@ h = 8  # Number of attention heads.
 N = 3  # Number of encoder layers.
 d_ff = p * 128  # Number of encoder hidden layer neural network dimensions.
 n_nodes = nodes
-embeder = 4  # Input embedding for embedding module. If int, it creates a linear projection.
+embeder = 5  # Input embedding for embedding module. If int, it creates a linear projection.
 d_v = p * 128  # Dimensions for value matrix.
 c = 10.  # Clipping value for probability calculation of decoder.
 head_split = True
@@ -52,6 +54,7 @@ use_graph_emb = True
 """
 TRAINING VARIABLES
 """
+samples = k * 1024
 batches = 1
 epochs = 200
 device = 'cuda'
@@ -174,10 +177,8 @@ def log_print_msg(msg):
     print(msg)
     logging.info(msg)
 
-total_params = sum(p.numel() for p in am_REINFORCE.parameters())
-log_print_msg("Number of Parameters {}".format(total_params))
 
-logging.basicConfig(filename="PHASE_1.log", level=logging.DEBUG, encoding='utf-8')
+logging.basicConfig(filename="PHASE_2_baseline_harsh_test2_larger_model.log", level=logging.DEBUG, encoding='utf-8')
 logging.debug('This will get logged')
 
 rewards_over_epochs = []
@@ -187,14 +188,16 @@ for epoch in range(epochs):
 
     train = []
     for i in range(0, samples):
-        train.append(gym.make("combinatorial_problems/Phase1Env-v0", num_nodes=nodes, num_objectives=num_objectives,
-                              random_objectives=random_objectives, new_on_reset=True))
+        train.append(gym.make("combinatorial_problems/Phase3Env-v0", num_nodes=nodes, num_objectives=num_objectives,
+                              obstacle_min_distance=obstacle_min_distance, num_obstacles=num_obstacles,
+                              random_objectives=random_objectives, new_on_reset=True,
+                              obstacle_max_distance=obstacle_max_distance))
     train = np.asarray(train)
 
     if render:
         # for some reason rendering still causes memory overflow, do not use it during training, only evaluation.
         for i in range(0, 5):
-            print(eval_env(train[i], render=True, name="epoch{}_phs1_test_instance{}".format(epoch, i)))
+            print(eval_env(train[i], render=True, name="epoch{}_phs3_test_instance{}".format(epoch, i)))
 
     rewards_over_batches = []
     use_masking = False
@@ -208,24 +211,27 @@ for epoch in range(epochs):
         baseline_rewards = []
 
         start = time.time()
-        log_print_msg(" Env, Steps Taken, Memory, Model")
+        log_print_msg(" Env, Steps Taken, Memory, Model, Baseline")
         for j, env in enumerate(batch):
-            reward, iters = eval_env(env, use_masking=use_masking, use_baseline=False)
+            reward, iters, baseline_reward = eval_env(env, use_masking=use_masking, use_baseline=True)
             am_REINFORCE.rewards.append(reward)
-            batch_rewards += np.sum(reward)
+            baseline_rewards.append([baseline_reward] * iters)
+            batch_rewards += (np.sum(reward) - baseline_reward)
             log_print_msg(
-                " {},{},{},{}".format(j, iters, torch.cuda.memory_allocated(), np.sum(reward)))
+                " {},{},{},{},{},{}".format(j, iters, torch.cuda.memory_allocated(), np.sum(reward), baseline_reward,
+                                            np.sum(reward) - baseline_reward))
         end = time.time()
 
         rewards_over_batches.append(batch_rewards)
         log_print_msg("   Batch Reward: {}; Time: {}".format(batch_rewards, end - start))
 
+        am_REINFORCE.running_G = np.concatenate(baseline_rewards)
         am_REINFORCE.update()
 
     rewards_over_epochs.append(np.mean(rewards_over_batches))
     log_print_msg("  Epoch Reward: {}".format(rewards_over_epochs[-1]))
 
     log_print_msg(rewards_over_epochs)
-    torch.save(am_REINFORCE.state_dict(), "PHASE_1/STATE_SAVE_EPOCH_{}".format(epoch))
+    torch.save(am_REINFORCE.state_dict(), "PHASE_2_BASELINE_LARGER/STATE_SAVE_EPOCH_{}".format(epoch))
 
 
