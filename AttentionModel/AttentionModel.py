@@ -387,7 +387,7 @@ class AttentionModel(nn.Module):
         batches = 1 if batches is None else batches
         # This buffer will contain the computed graph embeddings, allowing iterative generation of a path.
         # graph_emb -> batches x n_nodes x d_m
-        self.register_buffer('graph_emb', torch.rand(batches, n_nodes, d_m))
+        self.register_buffer('graph_emb', None) # when none, it indicates recomputation needed.
 
         self.encoder = TransformerEncoder(d_m=d_m,
                                           d_k=d_k,
@@ -438,7 +438,7 @@ class AttentionModel(nn.Module):
 
         """
         device = list(self.parameters())[0].device
-        if not reuse_embeding:
+        if not reuse_embeding or self.graph_emb is None:
             # Compute mask for embedder's self-MHA.
             # We will first apply the logical or operator. Using dot product produces an and operator.
             # mask_emb -> b x nodes x nodes (unsqueeze)-> b x 1 x nodes x nodes
@@ -452,18 +452,14 @@ class AttentionModel(nn.Module):
             # Compute node new node embeddings
             # src_emb -> b x nodes x d_m
             src_emb = self.encoder(graph, mask_emb)
-            # Figure out whether to replace values or entire buffer. ngl, this is for my own practice. This isn't needed
-            if self.batches is not None:
-                # Replace the graph embeddings with the newly calculated, maintaining the buffer shape
-                self.graph_emb[:] = src_emb.detach()
-            else:
-                # The number of batches encoded before is different. Replacing the entire Tensor.
-                # src_emb -> b x nodes x d_m
-                self.graph_emb = src_emb.detach()
+            # The number of batches encoded before is different. Replacing the entire Tensor.
+            # src_emb -> b x nodes x d_m
+            self.graph_emb = src_emb.detach()
         else:
             # Re-use previous embeddings!
             # src_emb -> b x nodes x d_m
             src_emb = self.graph_emb
+            # Do make sure this is set to None when doing a new environment!
         # Pass through to decoder
         # Compute the mask for decoder's MHA
         # mask_dec -> b x 1 x nodes
