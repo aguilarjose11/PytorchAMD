@@ -23,3 +23,9 @@ register(
     entry_point="combinatorial_problems.envs:Phase2Env",
     max_episode_steps=50,
 )
+
+register(
+    id="combinatorial_problems/Phase3Env-v0",
+    entry_point="combinatorial_problems.envs:Phase3Env",
+    max_episode_steps=50,
+)

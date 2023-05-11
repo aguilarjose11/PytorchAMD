@@ -171,8 +171,7 @@ class REINFORCE(nn.Module):
         if self.running_G is None:
             self.running_G = np.mean(G, axis=0)
         else:
-            #self.running_G = self.beta * self.running_G + (1 - self.beta) * G.mean()
-            pass
+            self.running_G = self.beta * self.running_G + (1 - self.beta) * G.mean()
         delta = (G - self.running_G)
         delta_std = self.eps + delta.std(axis=0) if len(G) > 1 else 1
         delta = delta / delta_std
