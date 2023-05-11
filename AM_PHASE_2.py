@@ -161,10 +161,16 @@ def eval_env(env, render=False, name="", seed=None, use_masking=False, use_basel
                         frames,
                         fps=1,
                         loop=0)
+
+    # Reset saved graph embeddings. Important before doing new environments!
+    am_REINFORCE.policy.graph_emb = None
+
     if use_baseline:
         return env_reward, j, np.sum(env.__getattr__("greedy_rewards"))
     else:
         return env_reward, j
+    # Reset model back to "normal"
+
 
 
 logging.basicConfig(filename="PHASE_2_baseline_harsh_test2_base_model.log", level=logging.DEBUG, encoding='utf-8')

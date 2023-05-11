@@ -127,3 +127,9 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Older files
+DeepPolicyGradient/
+Transformer/
+dataset/
+*.swp
