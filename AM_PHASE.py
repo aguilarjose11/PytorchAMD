@@ -20,6 +20,20 @@ import imageio
 import os
 
 """
+PHASE NAME VARIABLES
+"""
+PHASE = 3  # 1 or 2 or 3
+logging_filename = "PHASE_{}_base_model_baseline.log".format(PHASE)
+env_filename = "combinatorial_problems/Phase{}Env-v0".format(PHASE)
+render_filename = "render_PHASE_{}_base_model_baseline".format(PHASE)
+state_save_foldername = "PHASE_{}_base_model_baseline".format(PHASE)
+if not os.path.exists(state_save_foldername):
+    os.makedirs(state_save_foldername)
+
+logging.basicConfig(filename=logging_filename, level=logging.DEBUG, encoding='utf-8')
+
+
+"""
 ENVIRONMENT VARIABLES
 """
 nodes = 20
@@ -29,28 +43,70 @@ obstacle_min_distance = 0.10  # Minimum distance bound from an obstacle before t
 obstacle_max_distance = 0.2  # Maximum distance bound from an obstacle before the negative reward does not count.
 random_objectives = True
 k = 4
-samples = k*1024
-num_batches = k*32  # batch size = num_samples // num_batches
+samples = k * 1024
+num_batches = k * 32  # batch size = num_samples // num_batches
 context = 1  # Number of context embeddings
+
+if PHASE == 1:
+    # Number of features for graph (x, y, boolean end node, boolean objective)
+    embeder = 4
+    use_baseline = False
+
+    args = {"num_nodes": nodes,
+            "num_objectives": num_objectives,
+            "random_objectives": random_objectives,
+            "new_on_reset": True}
+elif PHASE == 2:
+    # Number of features for graph (x, y, boolean end node, boolean objective, radius of obstacle)
+    embeder = 5
+    use_baseline = True
+
+    args = {"num_nodes": nodes,
+            "num_objectives": num_objectives,
+            "obstacle_min_distance": obstacle_min_distance,
+            "num_obstacles": num_obstacles,
+            "random_objectives": random_objectives,
+            "new_on_reset": True,
+            "obstacle_max_distance": obstacle_max_distance}
+
+elif PHASE == 3:
+    # Number of features for graph (x, y, boolean end node, boolean objective, radius of obstacle, x velo, y velo)
+    embeder = 7
+    use_baseline = True
+
+    args = {"num_nodes": nodes,
+            "num_objectives": num_objectives,
+            "obstacle_min_distance": obstacle_min_distance,
+            "num_obstacles": num_obstacles,
+            "random_objectives": random_objectives,
+            "new_on_reset": True,
+            "obstacle_max_distance": obstacle_max_distance,
+            "max_velocity": 0.075}
+else:
+    embeder = -1
+    use_baseline = True
+
 
 """
 MODEL VARIABLES
 """
 # Attention Model Parameters
 p = 1  # overall model parameter size hyper-parameter
-d_m = p*128  # Model dimensions for embeddings.
+d_m = p * 128  # Model dimensions for embeddings.
 d_c = d_m * context  # Context dimensions.
-d_k = p*128  # Dimensions of key.
+d_k = p * 128  # Dimensions of key.
 h = 8  # Number of attention heads.
 N = 3  # Number of encoder layers.
-d_ff = p*128  # Number of encoder hidden layer neural network dimensions.
+d_ff = p * 128  # Number of encoder hidden layer neural network dimensions.
 n_nodes = nodes
-embeder = 5  # Input embedding for embedding module. If int, it creates a linear projection.
-d_v = p*128  # Dimensions for value matrix.
+use_masking = False
+
+d_v = p * 128  # Dimensions for value matrix.
 c = 10.  # Clipping value for probability calculation of decoder.
 head_split = True
 dropout = 0.
 use_graph_emb = True
+
 
 """
 TRAINING VARIABLES
@@ -84,6 +140,7 @@ am_REINFORCE = REINFORCE(policy=agent,
                          beta=0.9,
                          gradient_clip=(1., torch.inf),
                          eps=1e-9).to(device)
+
 
 # load model from state save
 # am_REINFORCE.load_state_dict(torch.load("file_path"))
@@ -166,10 +223,6 @@ def eval_env(env, render=False, name="", seed=None, use_masking=False, use_basel
     else:
         return env_reward, j
 
-
-logging.basicConfig(filename="PHASE_2_baseline_harsh_test2_base_model.log", level=logging.DEBUG, encoding='utf-8')
-logging.debug('This will get logged')
-
 # log packages
 # failures and ideas
 def log_print_msg(msg):
@@ -186,22 +239,20 @@ log_print_msg("Number of Parameters {}".format(total_params))
 rewards_over_epochs = []
 render = False
 for epoch in range(epochs):
-    log_print_msg("EPOCH {}/{}".format(epoch+1, epochs))
-    
+    log_print_msg("EPOCH {}/{}".format(epoch + 1, epochs))
+
     train = []
     for i in range(0, samples):
-        train.append(gym.make("combinatorial_problems/Phase2Env-v0", num_nodes=nodes, num_objectives=num_objectives,
-                              obstacle_min_distance=obstacle_min_distance, num_obstacles=num_obstacles,
-                              random_objectives=random_objectives, new_on_reset=True, obstacle_max_distance=obstacle_max_distance))
+        train.append(gym.make(env_filename, **args))
     train = np.asarray(train)
 
     if render:
         # for some reason rendering still causes memory overflow, do not use it during training, only evaluation.
         for i in range(0, 5):
-            print(eval_env(train[i], render=True, name="epoch{}_phs2_test_instance{}".format(epoch, i)))
+            print(eval_env(train[i], render=True, name="{}_epoch{}_test_instance{}".format(render_filename, epoch, i)))
 
     rewards_over_batches = []
-    use_masking = False
+
     batch_rewards = 0
     for i, batch in enumerate(np.array_split(train, num_batches)):
 
@@ -210,27 +261,43 @@ for epoch in range(epochs):
 
         batch_rewards = 0
         baseline_rewards = []
-        
+
         start = time.time()
         log_print_msg(" Env, Steps Taken, Memory, Model, Baseline")
         for j, env in enumerate(batch):
-            reward, iters, baseline_reward = eval_env(env, use_masking=use_masking, use_baseline=True)
-            am_REINFORCE.rewards.append(reward)
-            baseline_rewards.append([baseline_reward]*iters)
-            batch_rewards += (np.sum(reward)-baseline_reward)
-            log_print_msg(" {},{},{},{},{},{}".format(j, iters, torch.cuda.memory_allocated(), np.sum(reward), baseline_reward, np.sum(reward)-baseline_reward))
-        end = time.time()
-        
-        rewards_over_batches.append(batch_rewards)
-        log_print_msg("   Batch Reward: {}; Time: {}".format(batch_rewards, end-start))
 
-        am_REINFORCE.running_G = np.concatenate(baseline_rewards)
+            if use_baseline: # no baseline for Phase 1
+                reward, iters, baseline_reward = eval_env(env, use_masking=use_masking, use_baseline=use_baseline)
+                baseline_rewards.append([baseline_reward] * iters)
+                batch_rewards += (np.sum(reward) - baseline_reward)
+
+                log_print_msg(
+                    " {},{},{},{},{},{}".format(j, iters, torch.cuda.memory_allocated(), np.sum(reward),
+                                                baseline_reward,
+                                                np.sum(reward) - baseline_reward))
+            else:
+                reward, iters = eval_env(env, use_masking=use_masking, use_baseline=use_baseline)
+                batch_rewards += np.sum(reward)
+
+                log_print_msg(
+                    " {},{},{},{},{}".format(j, iters, torch.cuda.memory_allocated(), np.sum(reward),
+                                                np.sum(reward)))
+
+            am_REINFORCE.rewards.append(reward)
+
+        end = time.time()
+
+        rewards_over_batches.append(batch_rewards)
+        log_print_msg("   Batch Reward: {}; Time: {}".format(batch_rewards, end - start))
+
+        if use_baseline:
+            am_REINFORCE.running_G = np.concatenate(baseline_rewards)
         am_REINFORCE.update()
 
     rewards_over_epochs.append(np.mean(rewards_over_batches))
     log_print_msg("  Epoch Reward: {}".format(rewards_over_epochs[-1]))
 
     log_print_msg(rewards_over_epochs)
-    torch.save(am_REINFORCE.state_dict(), "PHASE_2_BASELINE_LARGER/STATE_SAVE_EPOCH_{}_BASEL_MODEL".format(epoch))
+    torch.save(am_REINFORCE.state_dict(), "{}/STATE_SAVE_EPOCH_{}_BASEL_MODEL".format(state_save_foldername, epoch))
 
 
